@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-30T13:55:48.000Z",
+  "title": "Design System: DeskSuite",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Workbench Blue",
+        "canonical": "#2563eb",
+        "tonalRamp": [
+          "#172554",
+          "#1e3a8a",
+          "#1d4ed8",
+          "#2563eb",
+          "#3b82f6",
+          "#60a5fa",
+          "#bfdbfe",
+          "#eff6ff"
+        ]
+      },
+      "workspace": {
+        "role": "neutral",
+        "displayName": "Cool Work Surface",
+        "canonical": "#f2f4f8",
+        "tonalRamp": [
+          "#11141a",
+          "#161922",
+          "#222834",
+          "#475569",
+          "#64748b",
+          "#cbd5e1",
+          "#e2e8f0",
+          "#f2f4f8"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Workbench Sans",
+        "purpose": "Compact interface copy and controls."
+      },
+      "code": {
+        "displayName": "Workbench Mono",
+        "purpose": "Paths, code, shortcuts, and measured values."
+      }
+    },
+    "shadows": [
+      {
+        "name": "control",
+        "value": "0 1px 2px rgba(15, 23, 42, 0.06)",
+        "purpose": "Quiet separation for fields and small controls."
+      },
+      {
+        "name": "floating",
+        "value": "0 18px 48px rgba(15, 23, 42, 0.18)",
+        "purpose": "Separate draggable floating panels from the work area."
+      }
+    ],
+    "motion": [
+      {
+        "name": "standard",
+        "value": "150ms ease-out",
+        "purpose": "Short hover, focus, and selection feedback."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-workbench",
+        "value": "1500px",
+        "purpose": "Tighten toolbar gaps before actions wrap."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Default primary action with a quiet, fast state change.",
+      "html": "<button class=\"ds-button\">Save changes</button>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 12px;border:1px solid transparent;border-radius:6px;background:var(--ds-accent,#2563eb);color:#fff;font:500 12px/1.2 'Segoe UI',sans-serif;transition:background-color 150ms ease-out,box-shadow 150ms ease-out}.ds-button:hover{background:var(--ds-accent-hover,#1d4ed8)}.ds-button:active{background:var(--ds-accent-active,#1e40af)}.ds-button:focus-visible{outline:2px solid var(--ds-accent,#2563eb);outline-offset:2px}.ds-button:disabled{opacity:.45;cursor:not-allowed}"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "description": "Neutral action with a low emphasis hover surface.",
+      "html": "<button class=\"ds-button-default\">Cancel</button>",
+      "css": ".ds-button-default{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 12px;border:1px solid var(--ds-border,#e2e8f0);border-radius:6px;background:var(--ds-surface,#fff);color:var(--ds-text-primary,#1e293b);font:500 12px/1.2 'Segoe UI',sans-serif;cursor:pointer;transition:background-color 150ms ease-out,border-color 150ms ease-out}.ds-button-default:hover{background:var(--ds-surface-muted,#f1f5f9)}.ds-button-default:active{background:var(--ds-border,#e2e8f0)}.ds-button-default:focus-visible{outline:2px solid var(--ds-accent,#2563eb);outline-offset:2px}.ds-button-default:disabled{opacity:.45;cursor:not-allowed}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "description": "Low emphasis action for toolbars and secondary choices.",
+      "html": "<button class=\"ds-button-ghost\">More options</button>",
+      "css": ".ds-button-ghost{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 10px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--ds-text-muted,#5b6879);font:500 12px/1.2 'Segoe UI',sans-serif;cursor:pointer;transition:background-color 150ms ease-out,color 150ms ease-out}.ds-button-ghost:hover{background:var(--ds-surface-muted,#f1f5f9);color:var(--ds-text-primary,#1e293b)}.ds-button-ghost:focus-visible{outline:2px solid var(--ds-accent,#2563eb);outline-offset:1px}.ds-button-ghost:disabled{opacity:.45;cursor:not-allowed}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "description": "Destructive action with a readable rose label and explicit copy.",
+      "html": "<button class=\"ds-button-danger\">Delete item</button>",
+      "css": ".ds-button-danger{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 12px;border:1px solid #fecdd3;border-radius:6px;background:#fff1f2;color:#be123c;font:500 12px/1.2 'Segoe UI',sans-serif;cursor:pointer;transition:background-color 150ms ease-out}.ds-button-danger:hover{background:#ffe4e6}.ds-button-danger:focus-visible{outline:2px solid #be123c;outline-offset:2px}.ds-button-danger:disabled{opacity:.45;cursor:not-allowed}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Single-line field with an accent focus ring.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Search files\" aria-label=\"Search files\" />",
+      "css": ".ds-input{width:100%;height:32px;padding:0 12px;border:1px solid var(--ds-border,#e2e8f0);border-radius:6px;background:var(--ds-surface,#fff);color:var(--ds-text-primary,#1e293b);font:400 12px/1.4 'Segoe UI',sans-serif;transition:border-color 150ms ease-out,box-shadow 150ms ease-out}.ds-input::placeholder{color:var(--ds-text-subtle,#5b6879)}.ds-input:focus-visible{outline:0;border-color:var(--ds-accent,#2563eb);box-shadow:0 0 0 2px color-mix(in srgb,var(--ds-accent,#2563eb) 20%,transparent)}"
+    },
+    {
+      "name": "Content Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Reusable content surface with a restrained outline.",
+      "html": "<article class=\"ds-card\"><strong>Workspace</strong><p>Files and recent activity</p></article>",
+      "css": ".ds-card{padding:12px;border:1px solid var(--ds-border,#e2e8f0);border-radius:16px;background:var(--ds-surface,#fff);color:var(--ds-text-primary,#1e293b)}.ds-card p{margin:6px 0 0;color:var(--ds-text-muted,#5b6879);font:400 12px/1.45 'Segoe UI',sans-serif}.ds-card:focus-within{border-color:var(--ds-accent,#2563eb)}"
+    },
+    {
+      "name": "Selected Tab",
+      "kind": "nav",
+      "description": "Pill tab for compact panel navigation.",
+      "html": "<button class=\"ds-tab\" aria-current=\"page\">Files <span>12</span></button>",
+      "css": ".ds-tab{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border:1px solid transparent;border-radius:999px;background:var(--ds-accent-soft,#eff6ff);color:var(--ds-accent,#2563eb);font:600 12px/1.2 'Segoe UI',sans-serif;cursor:pointer;transition:background-color 150ms ease-out}.ds-tab:hover{border-color:color-mix(in srgb,var(--ds-accent,#2563eb) 30%,transparent)}.ds-tab span{font:500 10px/1.2 'Cascadia Code',monospace}.ds-tab:focus-visible{outline:2px solid var(--ds-accent,#2563eb);outline-offset:1px}"
+    },
+    {
+      "name": "Tag Pill",
+      "kind": "chip",
+      "description": "Small semantic label; alternate colors are reserved for data meaning.",
+      "html": "<span class=\"ds-tag\"><i></i> Ready</span>",
+      "css": ".ds-tag{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border:1px solid var(--ds-border,#e2e8f0);border-radius:999px;background:var(--ds-surface-muted,#f1f5f9);color:var(--ds-text-secondary,#475569);font:500 11px/1 'Segoe UI',sans-serif}.ds-tag i{width:6px;height:6px;border-radius:50%;background:currentColor}"
+    },
+    {
+      "name": "Sidebar Panel",
+      "kind": "custom",
+      "description": "Docked panel with a stable header and independently scrolling content.",
+      "html": "<section class=\"ds-sidebar\"><header>Resource library</header><div>Panel content</div></section>",
+      "css": ".ds-sidebar{display:flex;flex-direction:column;width:260px;min-width:0;height:100%;overflow:hidden;border-inline-end:1px solid var(--ds-border,#e2e8f0);background:var(--ds-surface,#fff);color:var(--ds-text-primary,#1e293b);font:400 12px/1.5 'Segoe UI',sans-serif}.ds-sidebar header{flex:none;padding:8px 12px;border-bottom:1px solid var(--ds-border,#e2e8f0);font-weight:600}.ds-sidebar>div{min-height:0;flex:1;overflow:auto;padding:12px}"
+    },
+    {
+      "name": "Floating Panel",
+      "kind": "custom",
+      "description": "Elevated movable panel whose content scrolls within a stable frame.",
+      "html": "<section class=\"ds-floating\"><header>Quick actions</header><div>Panel content</div></section>",
+      "css": ".ds-floating{display:flex;flex-direction:column;width:620px;height:470px;overflow:hidden;border:1px solid var(--ds-border,#e2e8f0);border-radius:16px;background:var(--ds-surface,#fff);color:var(--ds-text-primary,#1e293b);box-shadow:0 18px 48px rgba(15,23,42,.18);font:400 12px/1.5 'Segoe UI',sans-serif}.ds-floating header{flex:none;min-height:40px;padding:0 12px;border-bottom:1px solid var(--ds-border,#e2e8f0);background:var(--ds-surface-subtle,#fafbfd);font-weight:600}.ds-floating>div{min-height:0;flex:1;overflow:auto;padding:12px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Bright Workbench",
+    "overview": "DeskSuite is a modular desktop workbench for moving between files, notes, projects, and creative tools. Its interface should feel bright, friendly, and low pressure while keeping dense operational information easy to scan. Familiar docked panels, compact toolbars, and resizable work areas serve repeat users; shared colors, spacing, and control states make independently developed plugins feel like one application.\n\nThe light theme uses cool, pale work surfaces and a clear blue accent. The dark theme keeps the same hierarchy with deep charcoal surfaces and a brighter blue active state. Rounded controls and panels soften the desktop chrome; motion stays short and functional so it confirms a state change without slowing work.",
+    "keyCharacteristics": [
+      "Bright neutral surfaces with a blue action color.",
+      "Compact desktop density with clear panel boundaries.",
+      "Soft corners and brief, quiet interaction feedback.",
+      "Chinese interface copy and familiar desktop navigation."
+    ],
+    "rules": [
+      {
+        "name": "Shared Surface Rule",
+        "body": "Shell and plugins use semantic --ds-* tokens for repeated surfaces, borders, text, and accent states.",
+        "section": "colors"
+      },
+      {
+        "name": "Readable Density Rule",
+        "body": "Compactness comes from grouping and panel structure, not from making essential interface text smaller than 11px or using pale text on white surfaces.",
+        "section": "typography"
+      },
+      {
+        "name": "Stable Panel Rule",
+        "body": "A tab change inside a floating panel must not move or resize the panel.",
+        "section": "layout"
+      },
+      {
+        "name": "Docked-Flat Rule",
+        "body": "Docked panels are separated by a one-pixel border. Save stronger elevation for menus and floating panels.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use the --ds-* semantic variables for repeated colors and surfaces across plugins.",
+      "Do build standard actions from the shared UI kit through useUiKit().",
+      "Do preserve compact workbench density while keeping essential labels readable.",
+      "Do group toolbar actions by task and give the primary action a distinct visual weight."
+    ],
+    "donts": [
+      "Don't create a second shared button, field, tab, or panel style inside a feature plugin.",
+      "Don't introduce a new accent hue for ordinary selection or navigation.",
+      "Don't use pale gray text for essential labels or make a permanent pulse the only status signal.",
+      "Don't nest decorative cards to imitate layout hierarchy."
+    ]
+  }
+}

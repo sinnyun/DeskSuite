@@ -1,0 +1,170 @@
+import assert from 'node:assert/strict'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { ensureOutDir, outDir, mcpHandshake, mcpCall, mcpText, mcpImage, connectCdp } from './common.mjs'
+
+ensureOutDir()
+await mcpHandshake()
+const checks = []
+async function call(name, args = {}) {
+  const result = await mcpCall(name, args)
+  assert.ok(!result.isError, mcpText(result))
+  return JSON.parse(mcpText(result))
+}
+const panel = args => call('whiteboard_panel', args)
+const command = (command, args = {}, deferSave = false) => panel({ action: 'command', command, args, deferSave })
+const inspect = () => panel({ action: 'inspect' })
+const runtime = () => command('renderState', {}, true)
+const boardId = 'native-board-verify'
+const expectedFile = join(outDir, 'board-native-expected.json')
+const identity = state => Object.fromEntries(state.nodeInstances.map(n => [n.id, n.instance]))
+const nearly = (a, b) => assert.ok(Math.abs(a - b) < 0.01, `${a} != ${b}`)
+let ids
+if (process.argv.includes('--close-native')) {
+  const expected = JSON.parse(await readFile(expectedFile, 'utf8'))
+  await panel({ action: 'open', boardId })
+  const before = JSON.parse(await call('whiteboard_get', { id: boardId }))
+  const text = '关闭窗口前的原生输入\n中文与 English 均恢复'
+  await command('textEdit', { id: expected.textId, action: 'open' }, true)
+  await command('textEdit', { id: expected.textId, action: 'set', text }, true)
+  assert.notEqual((await inspect()).scene.nodes.find(n => n.id === expected.textId).text, text)
+  await new Promise(r => setTimeout(r, 350))
+  const cdp = await connectCdp()
+  try {
+    const dom = await cdp.evaluate(`(() => {const e=document.querySelector('.leafer-text-editor');return e&&{text:e.innerText,width:e.getBoundingClientRect().width,lineHeight:parseFloat(getComputedStyle(e).lineHeight)}})()`)
+    assert.equal(dom.text, text)
+    assert.ok(dom.width > 0 && dom.lineHeight >= 20)
+  } finally { cdp.close() }
+  const shot = mcpImage(await mcpCall('capture_window'))
+  await writeFile(join(outDir, 'board-native-text-editor.png'), Buffer.from(shot.data, 'base64'))
+  before.nodes.find(n => n.id === expected.textId).text = text
+  await writeFile(expectedFile, JSON.stringify({ ...expected, json: JSON.stringify(before) }))
+  const result = await mcpCall('control_window', { action: 'close' })
+  assert.ok(!result.isError, mcpText(result))
+  console.log('Native TextEditor closed through application persistence barrier; restart verification required')
+  process.exit(0)
+}
+if (process.argv.includes('--check-restart')) {
+  const expected = JSON.parse(await readFile(expectedFile, 'utf8'))
+  assert.equal(await call('whiteboard_get', { id: boardId }), expected.json)
+  await panel({ action: 'open', boardId })
+  const actual = await runtime()
+  assert.equal(actual.groups.length, expected.groups)
+  assert.equal(actual.nodeInstances.find(n => n.id === expected.textId).tag, 'Text')
+  checks.push('restart restores native text and nested groups exactly')
+} else {
+  const scene = { format: 'desksuite-leafer', version: 1, title: '原生编辑与增量同步验证', nodes: [],
+    view: { x: 60, y: 60, zoom: 1 }, background: 'dots', snap: false, rulers: true, guides: [], bookmarks: [] }
+  await call('whiteboard_set', { id: boardId, sceneJson: JSON.stringify(scene) })
+  await panel({ action: 'open', boardId })
+  ids = []
+  for (const [type, x, y] of [['rect', 80, 80], ['ellipse', 350, 80], ['text', 80, 300], ['note', 350, 300], ['line', 80, 550], ['arrow', 350, 550], ['frame', 620, 80]])
+    ids.push(await command('add', { type, x, y, text: '中文换行测试\nNative text' }))
+  const initial = await runtime(), original = identity(initial)
+  assert.equal(initial.nodeInstances.find(n => n.id === ids[2]).tag, 'Text')
+  for (const id of ids) {
+    await command('update', { ids: [id], patch: { x: (await inspect()).scene.nodes.find(n => n.id === id).x + 7 } })
+    assert.deepEqual(identity(await runtime()), original)
+  }
+  await command('undo'); await command('redo')
+  assert.deepEqual(identity(await runtime()), original)
+  checks.push('all seven node types retain instances across geometry edits and history')
+  const before = await runtime()
+  await command('select', { ids: [ids[0]] })
+  await command('zoom', { value: 1.1 })
+  await panel({ action: 'flush' })
+  const after = await runtime()
+  assert.equal(after.sync.nodePasses, before.sync.nodePasses)
+  assert.equal(after.sync.nodeChecks, before.sync.nodeChecks)
+  checks.push('selection/view/save notifications perform zero node passes')
+  const opened = await command('textEdit', { action: 'open', id: ids[2] }, true)
+  assert.equal(opened.editor, 'TextEditor'); assert.equal(opened.editing, true)
+  assert.equal((await inspect()).textEditing, ids[2])
+  const text = '官方文本编辑\n中文、English 和换行'
+  await command('textEdit', { action: 'set', id: ids[2], text }, true)
+  await command('textEdit', { action: 'close', id: ids[2] })
+  assert.equal((await inspect()).textEditing, null)
+  assert.equal((await inspect()).scene.nodes.find(n => n.id === ids[2]).text, text)
+  await command('undo')
+  assert.notEqual((await inspect()).scene.nodes.find(n => n.id === ids[2]).text, text)
+  await command('redo')
+  assert.equal((await inspect()).scene.nodes.find(n => n.id === ids[2]).text, text)
+  await command('textEdit', { action: 'open', id: ids[3] }, true)
+  await command('textEdit', { action: 'set', id: ids[3], text: '便签原生编辑' }, true)
+  await panel({ action: 'flush' })
+  assert.equal((await inspect()).scene.nodes.find(n => n.id === ids[3]).text, '便签原生编辑')
+  checks.push('official TextEditor edits text and notes, commits one undo transaction and flush closes safely')
+  await command('select', { ids: ids.slice(0, 2) })
+  const group = await command('group')
+  let state = await runtime()
+  assert.equal(state.groups.find(g => g.id === group).open, false)
+  assert.ok(state.nodeInstances.filter(n => ids.slice(0, 2).includes(n.id)).every(n => n.parent === group))
+  const groupInstance = state.groups.find(g => g.id === group).instance
+  const snapshot = (await inspect()).scene.nodes
+  await command('transform', { dx: 23, dy: 17, angle: 15, scale: 1.1 })
+  assert.equal((await runtime()).groups.find(g => g.id === group).instance, groupInstance)
+  nearly((await runtime()).groups.find(g => g.id === group).rotation, 15)
+  assert.deepEqual(identity(await runtime()), original)
+  await command('undo')
+  for (const old of snapshot) {
+    const node = (await inspect()).scene.nodes.find(n => n.id === old.id)
+    nearly(node.x, old.x); nearly(node.y, old.y)
+  }
+  await command('redo')
+  checks.push('real Group transform uses native geometry; leaves and group retain instances; undo/redo restores geometry')
+  await command('groupEdit', { id: group, open: true })
+  await command('select', { ids: [ids[0]], deep: true })
+  const peerBefore = (await inspect()).scene.nodes.find(n => n.id === ids[1])
+  await command('transform', { dx: 13 })
+  assert.deepEqual((await inspect()).scene.nodes.find(n => n.id === ids[1]), peerBefore)
+  await command('groupEdit', { id: group, open: false })
+  await command('select', { ids: [ids[0], ids[2]] })
+  const outer = await command('group')
+  state = await runtime()
+  assert.equal(state.groups.find(g => g.id === group).parent, outer)
+  assert.equal((await inspect()).scene.groups.find(g => g.id === group).parent, outer)
+  await command('transform', { dx: 11, dy: 12, angle: -10 })
+  const beforeUngroup = (await inspect()).scene.nodes
+  await command('ungroup')
+  assert.ok(!(await runtime()).groups.some(g => g.id === outer))
+  for (const old of beforeUngroup) {
+    const node = (await inspect()).scene.nodes.find(n => n.id === old.id)
+    nearly(node.x, old.x); nearly(node.y, old.y)
+  }
+  await command('undo')
+  checks.push('open/close native group enables child-only editing; nested group/ungroup preserve geometry and history')
+  await command('select', { ids: [ids[0]] })
+  const count = (await inspect()).scene.nodes.length
+  await command('duplicate')
+  const duplicated = await inspect()
+  assert.ok(duplicated.scene.nodes.length > count)
+  assert.ok(duplicated.scene.groups.length >= 4)
+  await command('delete')
+  assert.equal((await inspect()).scene.nodes.length, count)
+  assert.equal((await runtime()).groups.length, 2)
+  checks.push('copy/paste remaps nested group IDs; deleting duplicate removes only duplicate hierarchy')
+  await command('textEdit', { action: 'open', id: ids[3] }, true)
+  await command('textEdit', { action: 'set', id: ids[3], text: '<测试> & 富文本切换' }, true)
+  await command('richText')
+  assert.ok((await inspect()).scene.nodes.find(n => n.id === ids[3]).html.includes('&lt;测试&gt; &amp;'))
+  await command('undo')
+  assert.ok(!(await inspect()).scene.nodes.find(n => n.id === ids[3]).html)
+  assert.equal((await inspect()).scene.nodes.find(n => n.id === ids[3]).text, '<测试> & 富文本切换')
+  checks.push('explicit rich text conversion preserves live native input, escapes HTML, and undo restores native mode')
+  const exported = await command('export', { download: false })
+  assert.ok(exported.width > 0 && exported.height > 0 && exported.data.startsWith('data:image/png'))
+  checks.push('nested native groups and text export through official Export')
+  await command('fit')
+  await panel({ action: 'flush' })
+  const final = await inspect()
+  await writeFile(expectedFile, JSON.stringify({ json: await call('whiteboard_get', { id: boardId }), groups: final.scene.groups.length, textId: ids[2] }))
+  await panel({ action: 'open', boardId: 'native-temp' })
+  await panel({ action: 'open', boardId })
+  assert.equal((await runtime()).groups.length, 2)
+}
+await new Promise(r => setTimeout(r, 350))
+const shot = mcpImage(await mcpCall('capture_window'))
+assert.ok(shot)
+await writeFile(join(outDir, 'board-native.png'), Buffer.from(shot.data, 'base64'))
+await writeFile(join(outDir, process.argv.includes('--check-restart') ? 'board-native-restart.json' : 'board-native.json'), JSON.stringify({ passed: true, checks }, null, 2))
+console.log(JSON.stringify({ passed: true, checks }, null, 2))

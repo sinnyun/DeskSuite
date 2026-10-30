@@ -1,0 +1,61 @@
+# PORTS — system-basic-runtime-log
+
+主进程运行时日志环形缓冲、MCP 工具调用事件与运行环境信息。
+
+## 元数据
+
+| 字段 | 值 |
+| --- | --- |
+| 域 | `system` |
+| 子类 | `basic` |
+| 名称 | `runtime-log` |
+| 入口 | `index.ts` |
+
+## 依赖（inject）
+
+- `ipc`
+- `mcp`
+- `config`
+
+## 提供的 IPC 服务
+
+服务名：`runtime`
+
+| 方法 | 参数 | 返回 |
+| --- | --- | --- |
+| `history` | — | `LogEntry[]`，最新的在前（最多 500 条） |
+| `clear` | — | `true` |
+| `info` | — | `{ appName, appVersion, electron, chrome, node, platform, arch, mcpPort, mcpTools, services }` |
+
+`mcpTools` 为工具信息数组 `{ name, mutating, impact: 'low'|'high' }[]`（按名称排序），供控制中心渲染
+「只读 / 写（低）/ 写（高）」徽标；不带权限档位字段，当前档位另经 `mcp.getAccess` 读取。
+
+`LogEntry` = `{ id, timestamp, level: info|warn|error|event|lifecycle, source, message, payload?, tags? }`。
+
+## 提供的 MCP 工具
+
+| 工具 | 参数 | 返回 |
+| --- | --- | --- |
+| `get_runtime_logs` | `limit?: number`（1-500，默认 50） | 文本（JSON） |
+| `clear_runtime_logs` | — | 文本 |
+
+## 消费的事件
+
+| 事件 | 负载 |
+| --- | --- |
+| `mcp/tool-call` | `{ name, phase: start\|end, ms?, error? }` |
+
+## 广播事件
+
+| 通道 | 负载 |
+| --- | --- |
+| `runtime:log` | `LogEntry` |
+
+## 消费的配置项
+
+- `mcp.port`
+
+### 后台失败诊断
+- 新增注入 `jobs`、`audit`。
+- MCP `get_job_status({ jobId? })`：查询后台任务的 state/error/summary，省略 ID 列出任务；最多保留 50 个已结束任务，未知 ID 返回错误对象。
+- MCP `get_audit_logs({ limit?: 1..500 })`：读取持久化审计记录，重启后仍可查看后台失败原因。

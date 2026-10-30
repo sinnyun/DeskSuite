@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+release/
+artifacts/
+native/lore-bridge/target/
+native/lore-bridge/bin/
+.npm-cache-task/
+*.log
+.DS_Store

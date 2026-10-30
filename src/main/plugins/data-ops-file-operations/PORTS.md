@@ -1,0 +1,23 @@
+# data-ops-file-operations
+
+- Domain / class / name: `data` / `ops` / `file-operations`
+- Entry: `index.ts`
+- Dependencies: Cordis services `ipc`, `mcp`, `window`, `config`, `jobs`, `audit`, `store`, `db`, and `commands`
+- Version history: injects `versionInfo` from `data-provider-version-info`; successful move/rename rebinds matching version entities, including descendants of moved directories. A rebind failure appears as a warning on the completed item and in audit; it does not convert a completed filesystem operation into a failure.
+- IPC service: `fileOps`
+  - `plan({ op, sources, target?, conflictPolicy? })` creates a read-only plan with source and target fingerprints. Operations are `copy`, `move`, `rename`, `mkdir`, and `trash`; policies are `skip`, `overwrite`, `rename`, and `cancel`.
+  - `writeText(path, content, { noOverwrite? })` creates a one item `writeText` plan; the content remains private to the main process. Callers must use `approve(planId)` then `execute(planId)`. Writes are limited to 10 MiB and use a synced temporary file followed by rename after a target fingerprint check. `noOverwrite: true` uses conflict policy `cancel`, so an existing target is reported as a conflict, a target changed after planning is reported stale, and the final commit uses an exclusive same-directory link to prevent a target created in the final race window from being replaced.
+  - `saveText(defaultName, content, extension?)` opens the OS save dialog and returns the same approved `writeText` plan; it never writes directly.
+  - `approve(planId)` and `reject(planId)` are renderer approval decisions. `execute(planId)` returns `{ jobId }` after a valid approval. `cancel(planIdOrJobId)`, `get(planId)`, `getResults()`, `getWriteRoots()`, `undo(undoId?)`, `getUndoStack()`, and `startDrag(paths)` complete the service.
+- MCP tools: `file_copy`, `file_move`, `file_rename`, `file_mkdir`, `file_trash`. Each is mutating; `file_trash` is high impact. MCP requests wait up to 60 seconds for a renderer decision and return `pending` on timeout or `rejected` when declined/headless.
+- Registers `file.copy`, `file.move`, `file.rename`, `file.mkdir`, and `file.trash` in the shared command provider; command UI and MCP command calls use the same plan executor.
+- Events: `fileOps:approval` with the plan summary; `fileOps:done` with every item result; `fileOps:undo-stack` with available undo entries; `fileOps:fs-changed` 200 ms after job settlement with `{ planId, jobId, paths: [{ source?, target }], at }`; `fs:changed` with affected directories and paths for Explorer/watch consumers; shared `job:progress` and `job:done` snapshots from `jobs`.
+- Storage: each operation result is registered with `store` as `file-operations.job-<jobId>` at `data/jobs/<jobId>.json`. At startup, the plugin registers and reads the 50 most recently modified regular `job_*.json` files through `store`; `getResults()` returns the latest 50. Older files are retained on disk.
+- `getWriteRoots()` returns the current configured write roots without changing settings.
+- Lifecycle: expired plans are pruned when a new plan is created or a plan is read. Rejection, timeout, cancellation, and job settlement release their associated state; no polling timer is used.
+- Path policy: every source and destination must pass `assertWritable` using `config.mcp.writeRoots`; the application user data directory is forbidden.
+- Copy reads may use a source outside configured write roots. Move, rename, and trash sources and every destination must pass the write-root check.
+- Successful move/rename migrates `meta`, `file_tags`, `files`, and `folders` path keys in one synchronous `db.tx`; directory moves include descendants and clear any replaced target subtree first. Copy does not migrate annotations. The target's old annotations/index rows are removed when overwrite is selected.
+- `cancel(planId)` also cancels its associated running job. With conflict policy `cancel`, execution still checks every source/target fingerprint first so changed items report `stale`.
+- Item statuses: `completed`, `skipped`, `conflict`, `failed`, `stale`.
+- Undo: the in-memory stack retains up to 20 completed eligible items. It supports rename, same-volume move, and creation of an empty directory. Undo rechecks the saved fingerprint and uses the normal plan/execute path with approval bypassed for the explicit renderer action. Copy, trash, cross-volume moves, overwritten destinations, changed items, and non-empty newly created directories cannot be undone. Undo history does not survive application restart.

@@ -1,0 +1,7 @@
+[data-workbench-shell] [data-sidebar="left"] > div:last-child {
+  background-color: var(--ds-surface-subtle);
+}
+
+[data-workbench-shell] [data-sidebar="right"] > div:last-child {
+  background-color: var(--ds-surface);
+}

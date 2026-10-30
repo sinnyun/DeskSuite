@@ -1,0 +1,26 @@
+[package]
+name = "desksuite-lore-bridge"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[dependencies]
+blake3 = "1"
+chrono = "0.4"
+lore-vm = { git = "https://github.com/BiloxiStudios/loregui.git", rev = "35eaf6ed1273397a5b18a283dda560949bb94ca4", package = "lore-vm" }
+mime_guess = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[patch.crates-io]
+# Lore pins a small Quinn protocol fork which preserves the APIs used by its
+# transport crate. Workspace patches from a git dependency are not inherited.
+quinn-proto = { git = "https://github.com/EpicGames/lore.git", rev = "da73d9fbe793f8ff10db848c9920b83f63c346f2", package = "quinn-proto" }
+
+[[bin]]
+name = "desksuite-lore-bridge"
+path = "src/main.rs"
+

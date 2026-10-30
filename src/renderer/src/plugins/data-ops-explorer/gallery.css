@@ -1,0 +1,23 @@
+/* Keep active group captions sticky without introducing a second surface palette. */
+[data-gallery-rail] [data-file-group] > button {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding-block: 8px;
+  background: var(--ds-surface);
+  border-bottom: 1px solid var(--ds-border);
+}
+
+[data-card-preview] > .lucide-folder {
+  width: 46px;
+  height: 46px;
+  stroke-width: 1.6;
+}
+
+[data-card-preview]:has(> .lucide-file-text) > .lucide-file-text {
+  position: absolute;
+  top: 14px;
+  left: 12px;
+  width: 24px;
+  height: 24px;
+}

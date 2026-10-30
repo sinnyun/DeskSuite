@@ -1,0 +1,6 @@
+{
+  "name": "Desktop Workbench Studio",
+  "description": "Modular desktop workbench framework featuring resizable frames, slot-based plugin architecture, native Fluent/macOS theming, File Explorer, and interactive Debug Console.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,10 @@
+# PORTS — data-provider-resources (renderer)
+
+- Metadata: data / provider / resources; entry `index.tsx`; core provider, no slots.
+- Provides renderer service `resources` through SDK registration. Consumers obtain it with `getService('resources')`; no cross-plugin imports. Public metadata matches the main `resources` IPC contract. All persistent data stays in main.
+- Methods: register/resolve/list/choose/forget/read/readText delegate to the same-named IPC. Optional consumers must handle the service being absent.
+- `registerFile(file: File)` registers an original disk-backed browser File through `resources.register`; the existing preload invoke argument adapter converts File values (including array entries) to paths with Electron webUtils before IPC. No bytes are read/copied and no second bridge is exposed. Memory-only Files fail instead of embedding pixels. This is a generic native-argument boundary, not renderer filesystem access.
+- `acquireImage(reference)` resolves the current revision, shares an in-flight `Resource.loadImage(url)` call and returns `{leaseId,key,url,resource,width,height}`. `key` is the revision-specific transport URL, preserving the file extension Leafer uses to recognize the format. `releaseImage(leaseId)` is idempotent and calls `Resource.remove(key)` only when the last owned lease is released. Remove/destroy Leafer nodes before releasing their lease. Never calls global Resource.destroy(). `getImageCacheState()` returns owned entry/lease counts.
+- Leases participate in the decoded image's own `use` count. Existing Leafer resources are reused rather than overwritten; a resource still used by other Leafer nodes is never removed by lease release. Failed unreferenced loads are evicted for retry.
+- This is the adapter between durable app references and Leafer's in-memory decoded cache, not a replacement for Leafer Resource or an image transcode. Resolve again after source changes; do not serialize leases or decoded image objects.
+- No browser persistence, direct filesystem access, events, user configuration, MCP registration or additional preload bridge.

@@ -1,0 +1,60 @@
+/* Map Milkdown's theme API to DeskSuite's global theme; the editor owns no palette. */
+.milkdown {
+  --crepe-color-background: var(--ds-surface);
+  --crepe-color-on-background: var(--ds-text-primary);
+  --crepe-color-surface: var(--ds-surface);
+  --crepe-color-surface-low: var(--ds-surface-subtle);
+  --crepe-color-on-surface: var(--ds-text-primary);
+  --crepe-color-on-surface-variant: var(--ds-text-muted);
+  --crepe-color-outline: var(--ds-border-strong);
+  --crepe-color-primary: var(--ds-accent);
+  --crepe-color-secondary: var(--ds-accent-soft);
+  --crepe-color-on-secondary: var(--ds-accent-active);
+  --crepe-color-inverse: var(--ds-text-primary);
+  --crepe-color-on-inverse: var(--ds-surface);
+  --crepe-color-inline-code: var(--ds-accent-active);
+  --crepe-color-error: var(--ds-status-danger);
+  --crepe-color-hover: var(--ds-surface-muted);
+  --crepe-color-selected: var(--ds-accent-soft);
+  --crepe-color-inline-area: var(--ds-surface-inset);
+
+  --crepe-font-title: var(--font-sans);
+  --crepe-font-default: var(--font-sans);
+  --crepe-font-code: var(--font-mono);
+}
+
+.milkdown .ProseMirror {
+  font-family: var(--font-sans);
+  font-size: var(--ds-type-body);
+  font-weight: var(--ds-weight-regular);
+  line-height: var(--ds-leading-body);
+  color: var(--ds-text-primary);
+  overflow-wrap: anywhere;
+  padding: 24px 20px;
+}
+
+@media (max-width: 1100px) {
+  .milkdown .ProseMirror { padding: 20px 16px; }
+}
+
+.milkdown .ProseMirror h1,
+.milkdown .ProseMirror h2,
+.milkdown .ProseMirror h3,
+.milkdown .ProseMirror h4,
+.milkdown .ProseMirror h5,
+.milkdown .ProseMirror h6 {
+  font-family: var(--font-sans);
+  font-weight: var(--ds-weight-heading);
+  color: var(--ds-text-primary);
+  line-height: var(--ds-leading-title);
+  margin-block: 1em 0.45em;
+}
+
+.milkdown .ProseMirror h1 { font-size: var(--ds-type-page-title); }
+.milkdown .ProseMirror h2 { font-size: var(--ds-type-panel-title); }
+.milkdown .ProseMirror h3 { font-size: var(--ds-type-title); }
+.milkdown .ProseMirror h4 { font-size: var(--ds-type-section-title); }
+.milkdown .ProseMirror h5,
+.milkdown .ProseMirror h6 { font-size: var(--ds-type-label); }
+.milkdown .ProseMirror p { font-size: var(--ds-type-body); line-height: var(--ds-leading-body); margin-block: 0.65em; }
+.milkdown .ProseMirror li p { margin-block: 0.2em; }
