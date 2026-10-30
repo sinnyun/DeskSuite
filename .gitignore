@@ -4,7 +4,8 @@ dist/
 release/
 artifacts/
 native/lore-bridge/target/
-native/lore-bridge/bin/
+native/lore-bridge/bin/*
+!native/lore-bridge/bin/desksuite-lore-bridge.exe
 .npm-cache-task/
 *.log
 .DS_Store

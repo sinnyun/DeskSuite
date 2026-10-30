@@ -90,7 +90,7 @@ scripts/verify/       # 实机验证与调试脚本（CDP / MCP / 截图），�
 ## 命令
 
 - `npm run dev` / 双击 `start-dev.bat`：开发（守护检查 → 更新依赖 → 清理 5173 → 启动，热重载）
-- `npm run build` + `npm run preview`：生产构建与预览
+- `npm run build` + `npm run preview`：生产构建与预览。本地构建会重新生成 `native/lore-bridge/bin/desksuite-lore-bridge.exe`；**不要提交或推送该本地产物**，该二进制由 GitHub Actions 编译维护，构建后用 `git restore native/lore-bridge/bin/desksuite-lore-bridge.exe` 还原。
 - `npm run guard`：架构守护检查
 - `npm run typecheck`：类型检查
 - 实机验证（详见 `docs/VERIFY.md`）：

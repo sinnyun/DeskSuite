@@ -1,0 +1,68 @@
+name: Build lore-bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'native/lore-bridge/bin/**'
+      - '**.md'
+    tags:
+      - 'lore-bridge-v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lore-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.96.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/lore-bridge
+
+      - name: Build release binary
+        working-directory: native/lore-bridge
+        run: cargo build --release --locked
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desksuite-lore-bridge-windows-x64
+          path: native/lore-bridge/target/release/desksuite-lore-bridge.exe
+          if-no-files-found: error
+
+      - name: Commit binary to repository
+        if: startsWith(github.ref, 'refs/heads/')
+        shell: bash
+        run: |
+          mkdir -p native/lore-bridge/bin
+          cp native/lore-bridge/target/release/desksuite-lore-bridge.exe native/lore-bridge/bin/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native/lore-bridge/bin/desksuite-lore-bridge.exe
+          if git diff --cached --quiet; then
+            echo "Binary unchanged, nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore: update lore-bridge binary [skip ci]"
+          git push
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: native/lore-bridge/target/release/desksuite-lore-bridge.exe

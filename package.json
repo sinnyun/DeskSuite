@@ -5,7 +5,7 @@
   "type": "module",
   "main": "out/main/index.cjs",
   "scripts": {
-    "dev": "npm run build:lore-bridge:debug && electron-vite dev",
+    "dev": "node scripts/build-lore-bridge.mjs --if-missing && electron-vite dev",
     "build:lore-bridge": "node scripts/build-lore-bridge.mjs --release",
     "build:lore-bridge:debug": "node scripts/build-lore-bridge.mjs",
     "build": "npm run build:lore-bridge && electron-vite build",

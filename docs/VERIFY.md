@@ -5,7 +5,7 @@
 ## 前置条件
 
 - Node 22+（脚本直接使用全局 `fetch` / `WebSocket`）
-- 先执行 `npm run build`（`launch.mjs --build` 可顺带构建）
+- 先执行 `npm run build`（`launch.mjs --build` 可顺带构建）。构建会重新生成 `native/lore-bridge/bin/desksuite-lore-bridge.exe`；**不要提交或推送该本地产物**，它由 GitHub Actions 编译维护，验证结束后用 `git restore native/lore-bridge/bin/desksuite-lore-bridge.exe` 还原。
 - 应用必须由 `launch.mjs` 启动：它会移除 `ELECTRON_RUN_AS_NODE`、附加 `--remote-debugging-port`，并把 pid / 日志写入产物目录
 
 ## 脚本一览
