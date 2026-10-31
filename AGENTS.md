@@ -90,7 +90,7 @@ scripts/verify/       # 实机验证与调试脚本（CDP / MCP / 截图），�
 ## 命令
 
 - `npm run dev` / 双击 `start-dev.bat`：开发（守护检查 → 更新依赖 → 清理 5173 → 启动，热重载）
-- `npm run build` + `npm run preview`：生产构建与预览。本地构建会重新生成 `native/lore-bridge/bin/desksuite-lore-bridge.exe`；**不要提交或推送该本地产物**，该二进制由 GitHub Actions 编译维护，构建后用 `git restore native/lore-bridge/bin/desksuite-lore-bridge.exe` 还原。
+- `npm run build` + `npm run preview`：生产构建与预览。本地构建会重新生成 `native/lore-bridge/bin/desksuite-lore-bridge.exe`；**不要提交或推送本地产物**，该二进制由 GitHub Actions 在 Lore 源码变更时编译并提交，普通程序文件变更不会触发 Rust 编译。
 - `npx electron-vite build`：只构建主进程/preload/渲染层，不编译 lore-bridge。**开发阶段需要生产产物时用这个命令，避免使用 `npm run build`。**
 - `npm run guard`：架构守护检查
 - `npm run typecheck`：类型检查
@@ -108,4 +108,4 @@ scripts/verify/       # 实机验证与调试脚本（CDP / MCP / 截图），�
 - 主进程与 preload 输出固定为 CJS（`out/main/index.cjs`、`index.cjs`），配置见 `electron.vite.config.ts`，不要改回 ESM；`package.json` 的 `main` 指向 `.cjs`。
 - 深色主题依赖 `.dark` 类，`src/renderer/src/index.css` 必须保留 `@custom-variant dark (&:where(.dark, .dark *))`，否则 Tailwind v4 会退回系统偏好、主题开关失效。
 - cordis 锁定 4.0.0-rc.x 精确版本；升级前先确认 API 变化（Service 基类构造即注册，start/stop 为自行约定的生命周期）。
-- 开发阶段不要运行任何触发 Rust 编译的命令（`npm run build`、`npm run build:lore-bridge`、`npm run build:lore-bridge:debug`、`launch.mjs --build`）。`npm run dev` 在 `native/lore-bridge/bin/desksuite-lore-bridge.exe` 存在时会自动跳过编译；修改 Rust 代码后推送 `main`，由 GitHub Actions 重新编译并提交二进制。
+- 开发阶段不要运行任何触发 Rust 编译的命令（`npm run build`、`npm run build:lore-bridge`、`npm run build:lore-bridge:debug`、`launch.mjs --build`）。`npm run dev` 在 `native/lore-bridge/bin/desksuite-lore-bridge.exe` 存在时会自动跳过编译；只有 Lore Rust 源码/构建配置/二进制路径变更、手动触发工作流或推送 Lore 版本标签时，GitHub Actions 才编译并提交二进制；普通程序文件提交不触发 Rust 编译。

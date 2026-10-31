@@ -5,9 +5,14 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
+    paths:
+      - 'native/lore-bridge/src/**'
+      - 'native/lore-bridge/Cargo.toml'
+      - 'native/lore-bridge/Cargo.lock'
+      - 'native/lore-bridge/rust-toolchain.toml'
+      - 'native/lore-bridge/build.rs'
+      - 'native/lore-bridge/.cargo/**'
       - 'native/lore-bridge/bin/**'
-      - '**.md'
     tags:
       - 'lore-bridge-v*'
 
