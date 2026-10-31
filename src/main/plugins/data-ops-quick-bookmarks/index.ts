@@ -18,9 +18,13 @@ const key = 'quick-bookmarks'
 const identity = (path: string): string => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)
 
 export default {
-  inject: ['ipc', 'mcp', 'store'],
+  inject: ['ipc', 'mcp', 'store', 'storage'],
   apply(ctx: Context) {
     ctx.store.register(key, { schema: groupsSchema, default: [{ id: 'common', name: '常用', items: [] }] })
+    ctx.storage.register('data-ops-quick-bookmarks', {
+      title: '快速书签',
+      entries: [{ label: '书签分组与条目', storeKey: key }]
+    })
     const folder = async (raw: string): Promise<string> => {
       if (!isAbsolute(raw)) throw new Error('请填写文件夹的绝对路径')
       const path = resolve(raw)

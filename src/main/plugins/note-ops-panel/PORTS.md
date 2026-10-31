@@ -58,3 +58,7 @@ Requests wait at most 15 seconds. On timeout, `note_panel` includes a `requestId
 Drafts are separate from note files and never execute a file write. Draft content is limited to 200,000 characters; embedded `data:image/...;base64` payloads are rejected so image bytes must remain in the shared resource system. Up to 100 paths are retained.
 
 Document contents autosave after a debounce. `inspect` reports `autoSaveStatus`, `pendingExecution`, and `error`; panel filters, layout, and other UI state do not trigger file writes.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

@@ -46,3 +46,7 @@ None.
 ## Known limits
 
 The renderer `BasketService` keeps a synchronous signature (`list/add/remove/clear`) while main-process writes are async: the UI updates optimistically and then adopts the array returned by the main process. When the main process is unavailable the basket degrades to session-only and logs one error.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

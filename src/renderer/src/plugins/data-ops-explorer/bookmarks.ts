@@ -1,4 +1,4 @@
-import { call, getService } from '../../workbench/sdk'
+import { call, callWithTrace, getService } from '../../workbench/sdk'
 import { explorerStore, type ExplorerViewMode } from './store'
 import { explorerPanes } from './panes'
 
@@ -25,7 +25,7 @@ export async function openBookmark(groupId: string, itemId: string): Promise<voi
 }
 
 export function startBookmarkBridge(): () => void {
-  return window.bridge.onEvent((channel, payload) => {
+  return window.bridge.onEvent((channel, payload, traceId) => {
     if (channel !== 'quickBookmarks:explorer') return
     const args = payload as { id: string; action: string; viewMode?: ExplorerViewMode; groupingEnabled?: boolean; groupBy?: 'kind' | 'modifiedMinute' | 'rating' | 'folder'; includeChildren?: boolean; path?: string; paths?: string[]; groupId: string; itemId: string }
     void (async () => {
@@ -45,20 +45,22 @@ export function startBookmarkBridge(): () => void {
 
         }
         if (args.action === 'navigate') {
-          await explorerStore.load(args.path!)
+          await explorerStore.load(args.path!, undefined, 0, 0, traceId)
           if (explorerStore.getState().status === 'error') throw new Error(explorerStore.getState().error ?? '打开失败')
         }
         if (args.action === 'select') {
           const paths = args.paths ?? []
           if (paths.some((path) => ![...explorerStore.getState().entries, ...explorerStore.getState().descendantEntries].some((item) => item.path === path))) throw new Error('选择项不在当前目录')
-          explorerStore.clearSelection()
-          paths.forEach((path) => explorerStore.select(path, 'toggle'))
+          explorerStore.clearSelection(traceId)
+          paths.forEach((path) => explorerStore.select(path, 'toggle', traceId))
         }
         if (args.action === 'addSelected') value = await addSelectedBookmarks(args.groupId)
         if (args.action === 'open') await openBookmark(args.groupId, args.itemId)
-        await call('quickBookmarks', 'complete', args.id, { value: value ?? null })
+        if (traceId) await callWithTrace(traceId, 'quickBookmarks', 'complete', args.id, { value: value ?? null })
+        else await call('quickBookmarks', 'complete', args.id, { value: value ?? null })
       } catch (error) {
-        await call('quickBookmarks', 'complete', args.id, { error: String(error) })
+        if (traceId) await callWithTrace(traceId, 'quickBookmarks', 'complete', args.id, { error: String(error) })
+        else await call('quickBookmarks', 'complete', args.id, { error: String(error) })
       }
     })()
   })

@@ -6,6 +6,7 @@ import type { Context } from 'cordis'
 import { Service } from 'cordis'
 import type { z } from 'zod'
 import { MCP_ACCESS_LEVELS, isMcpAccess, type McpAccess } from './config'
+import { withTrace } from './trace-context'
 
 export interface McpToolResult {
   content: Array<
@@ -53,6 +54,9 @@ declare module 'cordis' {
     'mcp/tool-call'(payload: {
       name: string
       phase: 'start' | 'end'
+      traceId?: string
+      args?: Record<string, unknown>
+      result?: McpToolResult
       ms?: number
       error?: string
     }): void
@@ -208,7 +212,9 @@ export class McpService extends Service {
         },
         (async (args: Record<string, unknown>) => {
           const startedAt = performance.now()
-          this.ctx.emit('mcp/tool-call', { name, phase: 'start' })
+          const traceId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+          return withTrace(traceId, async () => {
+          this.ctx.emit('mcp/tool-call', { name, phase: 'start', traceId, args: args ?? {} })
 
           const { access } = this.ctx.config.get('mcp')
           if (!this.isAllowed(name)) {
@@ -217,6 +223,7 @@ export class McpService extends Service {
             this.ctx.emit('mcp/tool-call', {
               name,
               phase: 'end',
+              traceId,
               ms: Math.round(performance.now() - startedAt),
               error: '权限不足'
             })
@@ -241,7 +248,9 @@ export class McpService extends Service {
             this.ctx.emit('mcp/tool-call', {
               name,
               phase: 'end',
+              traceId,
               ms: Math.round(performance.now() - startedAt),
+              result,
               error: result.isError ? '工具返回错误' : undefined
             })
             return result
@@ -250,11 +259,13 @@ export class McpService extends Service {
             this.ctx.emit('mcp/tool-call', {
               name,
               phase: 'end',
+              traceId,
               ms: Math.round(performance.now() - startedAt),
               error: message
             })
             return mcpError(message)
           }
+          })
         }) as never
       )
     }

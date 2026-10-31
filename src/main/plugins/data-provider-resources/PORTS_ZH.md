@@ -15,3 +15,7 @@
 - MCP `resource_view({action,reference?,time?,url?,method?,range?,etag?,ifRange?})`：open/preview/inspect/play/pause/seek/fetch/leafer，委托资源面板执行。因可操作播放/界面，标记写入。fetch 经渲染 fetch 读取本协议最多 1 MiB；leafer 验证图片租约加载和释放。回执超时 20 秒；功能验收不使用 CDP 修改状态。
 - 广播：`resources:changed` `{id,action:'register'|'forget'}`；`resources:action` 含 requestId 的界面命令。只读取环境变量 ELECTRON_RENDERER_URL 确定开发 CORS 源；无新增用户配置项。
 - 已确认功能范围见 `docs/research/LEAFER_BOARD_SCOPE.md`，实机验证入口为 `scripts/verify/resources.mjs`。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

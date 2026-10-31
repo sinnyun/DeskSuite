@@ -6,8 +6,12 @@ import type { Context } from 'cordis'
 import { mcpError, mcpText } from '../../services/mcp'
 
 export default {
-  inject: ['resources', 'ipc', 'mcp'],
+  inject: ['resources', 'ipc', 'mcp', 'storage'],
   apply(ctx: Context) {
+    ctx.storage.register('canvas-ops-resource-input', {
+      title: '画布粘贴图片',
+      entries: [{ label: '粘贴生成的 PNG', relativePath: 'data/canvas-paste', kind: 'directory' }]
+    })
     const clipboardImage = async () => {
       const image = clipboard.readImage()
       if (image.isEmpty()) throw new Error('剪贴板中没有图片')

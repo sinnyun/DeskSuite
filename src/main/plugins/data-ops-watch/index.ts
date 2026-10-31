@@ -101,11 +101,15 @@ const watchPlugin: Plugin = {
         if (typeof paneId !== 'string' || paneId.length > 100) throw new Error('窗格标识无效')
         if (!Array.isArray(directories)) throw new Error('监听目录列表无效')
         const normalized = [...new Set(directories.slice(0, MAX_WATCHED_DIRECTORIES).map(normalizeDirectory))]
+        const current = panes.get(paneId)
+        if (current && current.length === normalized.length && current.every((dir, index) => dir === normalized[index])) {
+          return [...new Set([...panes.values()].flat())].slice(0, MAX_WATCHED_DIRECTORIES)
+        }
         panes.set(paneId, normalized)
         return updateWatchSet()
       },
       clearPane: async (paneId: string) => {
-        panes.delete(paneId)
+        if (!panes.delete(paneId)) return [...new Set([...panes.values()].flat())].slice(0, MAX_WATCHED_DIRECTORIES)
         return updateWatchSet()
       },
       getDirectories: async () => updateWatchSet()

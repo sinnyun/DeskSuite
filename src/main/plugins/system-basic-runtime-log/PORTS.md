@@ -1,6 +1,6 @@
 # PORTS — system-basic-runtime-log
 
-Main-process runtime log ring buffer, MCP tool-call events and runtime environment info.
+Main-process runtime log ring buffer, IPC/MCP/broadcast trace events and runtime environment info.
 
 ## Metadata
 
@@ -23,7 +23,7 @@ Service name: `runtime`
 
 | Method | Arguments | Returns |
 | --- | --- | --- |
-| `history` | — | `LogEntry[]` newest first (max 500) |
+| `history` | — | `LogEntry[]` newest first (max 3000) |
 | `clear` | — | `true` |
 | `info` | — | `{ appName, appVersion, electron, chrome, node, platform, arch, mcpPort, mcpTools, services }` |
 
@@ -31,7 +31,7 @@ Service name: `runtime`
 used by the control center to render read-only / write (low) / write (high) badges. It carries no access
 level; the current level is read separately via `mcp.getAccess`.
 
-`LogEntry` = `{ id, timestamp, level: info|warn|error|event|lifecycle, source, message, payload?, tags? }`.
+`LogEntry` also supports `category`, `traceId`, `phase`, `durationMs`, and `status`. Input/output payloads are credential-redacted and bounded to 48 KB per entry; the main ring buffer retains 3000 entries.
 
 ## MCP tools provided
 
@@ -44,7 +44,9 @@ level; the current level is read separately via `mcp.getAccess`.
 
 | Event | Payload |
 | --- | --- |
-| `mcp/tool-call` | `{ name, phase: start\|end, ms?, error? }` |
+| `mcp/tool-call` | `{ name, phase: start\|end, traceId, args?, result?, ms?, error? }` |
+| `ipc/invoke` | `{ requestId, service, method, phase, args?, result?, durationMs?, error? }` |
+| `ipc/broadcast` | `{ channel, payload }` |
 
 ## Events broadcast
 

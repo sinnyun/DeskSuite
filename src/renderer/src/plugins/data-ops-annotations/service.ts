@@ -34,7 +34,11 @@ class AnnotationStore {
   private readonly tagIds = new Map<string, Map<string, number>>()
   private readonly listeners = new Set<() => void>()
   private readonly pending = new Set<string>()
+  private readonly queuedPaths = new Set<string>()
+  private loadTask: Promise<void> | undefined
   private treeCache: TagItem[] = []
+  private treeLoaded = false
+  private treeRequest: Promise<TagItem[]> | undefined
   private snapshot: MetadataMap = Object.freeze({})
   private running = false
   private stopEvents: (() => void) | undefined
@@ -82,10 +86,18 @@ class AnnotationStore {
     return call('annotations', 'forPaths', paths)
   }
 
-  async tree(): Promise<TagItem[]> {
-    this.treeCache = await call<TagItem[]>('annotations', 'tree')
-    this.rebuildTagIds()
-    return this.treeCache
+  tree(force = false): Promise<TagItem[]> {
+    if (this.treeRequest) return this.treeRequest
+    if (!force && this.treeLoaded) return Promise.resolve(this.treeCache)
+    const request = call<TagItem[]>('annotations', 'tree').then((tree) => {
+      this.treeCache = tree
+      this.treeLoaded = true
+      this.rebuildTagIds()
+      return this.treeCache
+    })
+    this.treeRequest = request
+    void request.finally(() => { if (this.treeRequest === request) this.treeRequest = undefined }).catch(() => undefined)
+    return request
   }
 
   toggleFavorite(path: string): boolean {
@@ -190,34 +202,51 @@ class AnnotationStore {
     }
   }
 
-  private async load(paths: string[]): Promise<void> {
+  private load(paths: string[]): Promise<void> {
     const unique = [...new Set(paths.filter(Boolean))].filter((path) => !this.pending.has(path))
-    if (unique.length === 0) return
-    unique.forEach((path) => this.pending.add(path))
-    try {
-      const result = await this.forPaths(unique)
-      for (const path of unique) {
-        const item = result[path]
-        if (!item) continue
-        this.entries.set(path, {
-          favorite: item.favorite,
-          rating: item.rating,
-          tags: item.tags.map((tag) => tag.name)
-        })
-        this.notes.set(path, item.note)
-        this.tagIds.set(path, new Map(item.tags.map((tag) => [tag.name, tag.id])))
-      }
-      if (this.running) this.emit()
-    } finally {
-      unique.forEach((path) => this.pending.delete(path))
+    unique.forEach((path) => {
+      this.pending.add(path)
+      this.queuedPaths.add(path)
+    })
+    if (!this.loadTask && this.queuedPaths.size) {
+      const task = Promise.resolve().then(async () => {
+        let failure: unknown
+        while (this.queuedPaths.size) {
+          const batch = [...this.queuedPaths].slice(0, 1000)
+          batch.forEach((path) => this.queuedPaths.delete(path))
+          try {
+            const result = await this.forPaths(batch)
+            for (const path of batch) {
+              const item = result[path]
+              if (!item) continue
+              this.entries.set(path, {
+                favorite: item.favorite,
+                rating: item.rating,
+                tags: item.tags.map((tag) => tag.name)
+              })
+              this.notes.set(path, item.note)
+              this.tagIds.set(path, new Map(item.tags.map((tag) => [tag.name, tag.id])))
+            }
+            if (this.running) this.emit()
+          } catch (error) {
+            failure ??= error
+          } finally {
+            batch.forEach((path) => this.pending.delete(path))
+          }
+        }
+        if (failure) throw failure
+      }).finally(() => {
+        if (this.loadTask === task) this.loadTask = undefined
+      })
+      this.loadTask = task
     }
+    return this.loadTask ?? Promise.resolve()
   }
 
   private async refreshKnown(): Promise<void> {
     if (!this.running) return
     await this.load([...this.entries.keys()])
-    this.treeCache = await call<TagItem[]>('annotations', 'tree').catch(() => this.treeCache)
-    this.rebuildTagIds()
+    await this.tree(true).catch(() => this.treeCache)
     this.emit()
   }
 

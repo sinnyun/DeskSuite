@@ -92,7 +92,7 @@ Lore 内容放在 `<userData>/data/versions/worktrees/<entity-id>/`、`stores/<e
 
 - `versions.state(path)`、`list(path)`：只读状态和时间倒序列表。
 - `create(path, title)`：显式保存当前字节为新版本。
-- `restore(path, versionId)`：经过源文件状态检查、用户明确确认和 DeskSuite 写入根策略后恢复。
+- `restore(path, versionId)`：经过源文件状态检查、用户明确确认和 DeskSuite 写入根策略后恢复。界面调用缺少覆盖目录的可写根时，由主进程弹窗授权并持久化该目录；MCP 调用仍须预先满足写入根，不弹窗。
 - 分支图与 `create/switch/archive/merge/resolve/abort` 动作已由 `versions_branch_graph` / `versions_branch_action` 暴露；恢复冲突期间不会把半成品写回源文件。
 
 状态检测只对用户选择的文件或已打开的历史面板执行；使用内容哈希比较保存版本，并在前后检查文件 size/mtime，检测过程中变化则返回可重试错误。后台执行并使用有界并发，不在 React render 中调用 Lore。

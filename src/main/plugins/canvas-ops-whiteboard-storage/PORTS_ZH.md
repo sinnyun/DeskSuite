@@ -14,3 +14,7 @@
 - MCP whiteboard_panel：action=open/replace/flush/inspect/command，另有 boardId/sceneJson/command/args。command 分发渲染插件公开命令；new(title?)、removeBoard 由面板处理。inspect 返回当前场景、选择、保存状态等。视图命令须先 open。
 - 广播 whiteboard:action，附 requestId；通过 whiteboard.complete 回执；15 秒超时，卸载结束等待。
 - 图片视频保存统一资源永久 URI/resourceKind；不嵌入原文件，不新增监听点或窗口，不修改宿主，不使用浏览器存储保存业务数据。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

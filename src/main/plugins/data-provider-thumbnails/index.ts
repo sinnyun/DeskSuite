@@ -3,7 +3,7 @@ import type { NativeImage } from 'electron'
 import type { Context, Plugin } from 'cordis'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { extname, join } from 'node:path'
 import { z } from 'zod'
 import { identity, normalize } from '../../services/paths'
 
@@ -43,6 +43,12 @@ const generationQueue: Array<() => void> = []
 let cacheReady: Promise<void> | null = null
 let writeChain: Promise<void> = Promise.resolve()
 let cacheByteLimit = DEFAULT_CACHE_BYTE_LIMIT
+
+const ICON_CACHE_LIMIT = 512
+// .exe/.lnk 等文件的图标随文件本身变化，不能按扩展名复用。
+const PER_FILE_ICON_EXTENSIONS = new Set(['appx', 'appref-ms', 'cpl', 'dll', 'exe', 'ico', 'lnk', 'msi', 'scr', 'url'])
+const iconCache = new Map<string, string>()
+const iconRequests = new Map<string, Promise<string>>()
 
 function encodeBlob(header: CacheHeader, jpeg: Buffer): Buffer {
   const json = Buffer.from(JSON.stringify(header), 'utf8')
@@ -310,10 +316,65 @@ async function getThumbnail(rawPath: string, requestedEdge?: number): Promise<{ 
   return { dataUrl: `data:image/jpeg;base64,${resized.toString('base64')}` }
 }
 
+async function getThumbnails(rawPaths: string[], requestedEdge?: number): Promise<Array<{ path: string; dataUrl: string | null }>> {
+  if (!Array.isArray(rawPaths)) throw new Error('paths 必须是数组')
+  const paths = [...new Set(rawPaths.filter((path): path is string => typeof path === 'string' && Boolean(path.trim())))].slice(0, 64)
+  return Promise.all(paths.map(async (path) => {
+    try {
+      const result = await getThumbnail(path, requestedEdge)
+      return { path, dataUrl: result.dataUrl }
+    } catch {
+      return { path, dataUrl: null }
+    }
+  }))
+}
+
+function iconCacheKey(path: string): string {
+  const extension = extname(path).toLowerCase()
+  if (!extension || PER_FILE_ICON_EXTENSIONS.has(extension.slice(1))) return path
+  return `extension:${extension}`
+}
+
+async function loadSystemIcon(path: string): Promise<string> {
+  const icon = await app.getFileIcon(path, { size: 'large' })
+  if (icon.isEmpty()) throw new Error('系统未能提供该文件的图标')
+  return `data:image/png;base64,${icon.toPNG().toString('base64')}`
+}
+
+async function getSystemIcon(rawPath: string): Promise<{ dataUrl: string }> {
+  if (typeof rawPath !== 'string' || !rawPath.trim()) throw new Error('path 必须是非空绝对路径')
+  const path = normalize(rawPath)
+  const key = iconCacheKey(path)
+  const cached = iconCache.get(key)
+  if (cached) return { dataUrl: cached }
+
+  let pending = iconRequests.get(key)
+  if (!pending) {
+    pending = (async () => {
+      const stats = await fs.stat(path)
+      if (!stats.isFile() && !stats.isDirectory()) throw new Error('该路径不支持系统图标')
+      const dataUrl = await loadSystemIcon(path)
+      if (iconCache.size >= ICON_CACHE_LIMIT) {
+        const oldest = iconCache.keys().next().value
+        if (oldest !== undefined) iconCache.delete(oldest)
+      }
+      iconCache.set(key, dataUrl)
+      return dataUrl
+    })()
+    iconRequests.set(key, pending)
+    pending.finally(() => iconRequests.delete(key)).catch(() => undefined)
+  }
+  return { dataUrl: await pending }
+}
+
 const thumbnailsPlugin: Plugin = {
   name: 'data-provider-thumbnails',
-  inject: ['ipc', 'settings'],
+  inject: ['ipc', 'settings', 'storage'],
   apply(ctx: Context): void {
+    ctx.storage.register('data-provider-thumbnails', {
+      title: '缩略图缓存',
+      entries: [{ label: '缩略图缓存文件', relativePath: CACHE_DIR_NAME, kind: 'directory' }]
+    })
     const settingsSchema = z.object({ cacheMiB: z.number().int().min(32).max(2048).default(512).describe('缩略图磁盘缓存预算（MiB）') })
     ctx.settings.register('thumbnails', settingsSchema, { cacheMiB: 512 }, { title: '缩略图缓存', description: '磁盘缓存预算；超出时按最近使用时间回收', group: '数据服务' })
     void ctx.settings.get('thumbnails').then((value) => { cacheByteLimit = Number(value.cacheMiB) * 1024 * 1024 })
@@ -323,7 +384,11 @@ const thumbnailsPlugin: Plugin = {
       void ensureCache().then(() => withWriteLock(() => pruneCache())).catch(() => undefined)
     })
     ctx.ipc.handle('thumbnails', {
-      get: (path: string, edge?: number) => getThumbnail(path, edge)
+      get: (path: string, edge?: number) => getThumbnail(path, edge),
+      getMany: (paths: string[], edge?: number) => getThumbnails(paths, edge)
+    })
+    ctx.ipc.handle('fileIcons', {
+      get: (path: string) => getSystemIcon(path)
     })
   }
 }

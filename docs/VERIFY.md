@@ -16,6 +16,7 @@
 | `explorer-concept.mjs` | 概念图布局验收：MCP 目录/视图/选择/评分/收藏与书签，浅深主题截图、2048/1280 宽度布局检查；复制样例目录的 PNG 到隔离 samples | 隔离 full 实例（write-root samples），设置 MCP/CDP 环境变量后 `node scripts/verify/explorer-concept.mjs [PNG样例目录]` |
 | `version-action-recovery.mjs` | 验证生产 UI 命令计划的批准/执行协议、恢复拒绝不污染同步错误、空标题保存自动命名、源文件哈希不变以及保存按钮 DOM 状态 | 本脚本 `--prepare`；全新 profile `version-action-recovery`，full，write-root samples；分别 `--seed-one`、停机 `--edit-two`、重启 `--seed-two`、停机 `--edit-one`、重启后不带参数验收 |
 | `version-storage.mjs` | 版本信息数据库查询与 Lore 操作分离；反复查询零 Lore 启动、指纹补齐、创建/恢复/分支后原子更新及重启持久化；显式旧库同步保留原文件哈希 | `node scripts/verify/version-storage.mjs --prepare`；profile `artifacts/verify/profiles/version-storage`、full、write-root `artifacts/verify/samples`；运行脚本，重启后 `--check-restart`；实际实例 `--reconcile-existing` |
+| `version-write-authorization.mjs` | 本地版本写入独立范围与 userData 拒绝；`--live` 验证 MCP 恢复、分支切换及共享 IPC 命令越界拒绝 | `node scripts/verify/version-write-authorization.mjs --live`（隔离 full 实例，write-root samples） |
 | `lore-restore.mjs` | Shot 007 真实恢复现场隔离备份、恢复重试、01/03/02 连续切换与 MCP 任务错误查询；原文件模式仅完成已有恢复 | `node scripts/verify/lore-restore.mjs --prepare`；隔离 full 实例运行 `node scripts/verify/lore-restore.mjs`；实际实例运行加 `--original` |
 | `drag-performance.mjs` | MCP 连续移动/渲染/命中/rAF 分位数、零中途保存与落点、9/200 对象/真实 Eagle 大图、模糊效果对比、4 轮窗口 resize 的可见视口/mount/三层 canvas/DPR 一致性；需运行 Eagle 并有 400 万像素以上图片 | `node scripts/verify/drag-performance.mjs [--baseline]`；`--inspect-live` 只读当前 renderState 并截图 |
 | `image-transform-stability.mjs` | MCP 验证图片移动/缩放/旋转/翻转及历史、属性/锁定/裁剪全程保持原节点/子图层/租约且 ready；裁剪缩放落盘、重开几何、快速切换后的完整导出与截图 | `node scripts/verify/image-transform-stability.mjs` |
@@ -30,6 +31,7 @@
 | `stop.mjs` | 结束 `launch.mjs` 启动的实例 | `node scripts/verify/stop.mjs [--force]` |
 | `evaluate.mjs` | 在渲染进程执行 JS 并输出结果 | `node scripts/verify/evaluate.mjs "document.title"` |
 | `mcp.mjs` | MCP 工具列表 / 单次调用 / 冒烟检查 | `node scripts/verify/mcp.mjs smoke` |
+| `debug-console.mjs` | 通过 DeskSuite MCP 打开调试悬浮面板、导航资源管理器并选择样例文件；验证 IPC 四阶段、MCP 结果/耗时、跨广播 trace 传播、凭据脱敏及界面中文功能名称 | full 隔离实例启动后运行 `node scripts/verify/debug-console.mjs`，再运行 `node scripts/verify/capture.mjs` |
 | `workcrate-quick-create.mjs` | 表格 TSV/CSV/多行解析、可编辑草稿几何、首次复用、原生物料往返、失败不落半批和后续追加；`--live` 验证已打开 VectorCraft 的撤销回滚 | `node scripts/verify/workcrate-quick-create.mjs [--live]` |
 | `workcrate-project.mjs` | 通过 WorkCrate MCP 配置带引号的 Windows CLI 路径、创建隔离工程与 VectorCraft 文档，校验文件落盘、初始画板与重新打开同步 | `node scripts/verify/workcrate-project.mjs` |
 | `workcrate-export.mjs` | 页面单选/多选/全选/取消、刷新保留选择，原生 PNG/JPG/多页 PDF 导出，文件数量/尺寸/页序/源文件不变与路径校验 | `node scripts/verify/workcrate-export.mjs` |
@@ -317,3 +319,25 @@ node scripts/verify/jobs.mjs    # jobs / audit
 - session/workspaces 增加分组开关字段；旧 grouped 记录迁移为 grid＋分组；无关局部会话更新不重置开关。MCP quick_bookmarks_explorer.view 增加 groupingEnabled/groupBy/includeChildren，复用生产 store 和插件服务。
 - guard/typecheck/build、MCP smoke、explorer-concept 与 explorer-view-composition 专项通过。full 隔离实例 view-composition，samples 写入根，MCP 9641/CDP 9271。六种组合、卡片样式一致性、每区块列表虚拟化、递归条目选择、四种分组、旧 grouped 迁移、局部更新保留开关、画廊单列/纵向滚动/唯一预览/20:80 几何通过。浅色、深色及 1280 窄窗口截图已查看。最终 gallery＋分组在完整应用重启后恢复通过。errors --wait 1500：0 错误/警告。
 - 报告：explorer-composition.json、explorer-composition-restart.json；截图：explorer-gallery-final.png、explorer-gallery-dark.png、explorer-gallery-compact.png、explorer-composition-grouped-list.png。实例已停止。
+
+### 2026-10-31 文件卡片无缩略图时显示系统图标
+
+- 主进程 `data-provider-thumbnails` 新增 `fileIcons.get(path)`：通过 `app.getFileIcon` 返回 PNG data URL，按扩展名做内存缓存（`.exe` / `.lnk` 等按路径），上限 512 项并合并并发请求。
+- 渲染层 `FileCard` 与画廊不支持预览的查看区在没有缩略图时显示系统文件图标；目录继续使用主题化文件夹图标，查询失败回退到原类型图标。
+- `npm run guard`、`npm run typecheck`、`npx electron-vite build` 通过。隔离 profile `artifacts/verify/profiles/file-icons`（full、samples 写入根、MCP 9645 / CDP 9275）经 MCP 打开 12 个样例文件：10 个无缩略图卡片与画廊查看区均显示系统 PNG 图标（原生 32×32），2 个 PNG 仍显示缩略图；重载后图标保持。
+- 截图 `artifacts/verify/file-icons-grid.png`、`artifacts/verify/file-icons-gallery.png` 已查看；`errors.mjs --wait 2500` 返回 0 错误/警告；验证实例已停止。
+
+### 2026-10-31 版本恢复/切分支持界面目录授权
+
+- 复现：没有 `mcp.writeRoots` 时，界面恢复与 MCP 恢复一样直接报“没有配置任何可写根目录”；恢复和会改写源文件的切分支被 MCP 可写根无条件拦截。
+- 新增 `data-ops-versions/write-access.ts` 的 `grantUiWriteRoot`：已覆盖则不弹窗；无根或越界时由主进程 `dialog.showMessageBox` 请求目录授权，同意后加入 `mcp.writeRoots` 并持久化；取消即中止；`userData` 始终拒绝。MCP 调用仍要求预先满足可写根且永不弹窗，避免经 `command_run` 转发 IPC 自行授权。
+- `restore` 与 `branchAction`（`switch`/`merge`/`resolve`）在界面来源下于真正改写前授权，恢复在弹窗后再次校验源 SHA-256；契约文档与 README 同步更新。
+- `npm run guard`、`npm run typecheck`、`npx electron-vite build` 通过；`version-write-authorization.mjs` 覆盖已授权复用、无根/越界授权、取消、userData 拒绝与重复调用不弹窗。
+- 隔离 profile `artifacts/verify/profiles/versions-real`（full、无写根、MCP 9640 / CDP 9260）：MCP `versions_restore` 立即返回 `no-write-roots` 且无弹窗；经 `command_run` 调用 `ipc.versions.restore` 弹出授权，确认后目录写入配置并恢复成功；随后已授权根下的 IPC 恢复（553283↔619546）与 `switch main` 均无弹窗完成，`errors.mjs --wait 1500` 为 0 错误/警告。
+- 截图 `artifacts/verify/version-auth-dialog.png`（授权弹窗）与 `version-auth-restored.png`（恢复后时间线当前版本 02）已查看；验证实例已停止。
+
+### 2026-10-31 调试信息聚合面板
+
+- 调试面板迁至通用悬浮面板，支持按类别、级别和来源筛选，全文搜索、关联调用链折叠、载荷展开、复制/导出与分批加载更早记录。bridge 记录渲染端发送/接收，主进程统一记录 IPC 请求/响应、MCP 参数/结果/耗时、事件广播和后台任务进度；同步 IPC/MCP 操作内的广播继承 trace ID。资源管理器补充文件选择、目录查询/分页/结果处理、标签聚合、筛选、视图、排序和元数据动作日志。凭据类字段脱敏，单条载荷限制 48 KB，主/渲染日志缓冲均设容量上限。
+- `npm run guard`、`npm run typecheck`、`npx electron-vite build` 通过。隔离实例 `debug-console`（full、write-root `artifacts/verify/samples`、MCP 9655 / CDP 9277）通过 `debug-console.mjs`：经 MCP 打开调试面板、导航到仓库根并选择 `package.json`；验证 `runtime.history` 四阶段 bridge/IPC 往返、MCP 结果/耗时、异步 Explorer 广播/操作继承 MCP trace ID，并验证 `apiKey` 字段脱敏。
+- 只读 DOM 检查悬浮面板为 1320×820 且来源筛选可见；`errors.mjs --wait 1500` 为 0 错误/警告。MCP `capture_window` 截图 `artifacts/verify/debug-console.png` 已查看，实例已停止。

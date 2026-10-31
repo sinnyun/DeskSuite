@@ -84,3 +84,7 @@ MCP 写操作遵循共享路径策略和当前 MCP 权限设置。MCP 创建工�
 - MCP `workcrate_quick_create_preview({ text })` 只解析；`workcrate_quick_create_open({ projectId, text? })` 广播 `workcrate:panel-open`（`quickCreate: true`、可选 `table`），打开可编辑草稿。
 - MCP `workcrate_boards_quick_create({ projectId, table, reuseInitial?: true, confirm: true })` 遵循 full 权限及可写根；UI 仅授权已关联文档所在目录。返回 `{ count, reusedInitial, boards }`。
 - 同工程串行操作，每批共用一个原生撤销组，逐行错误取消整组后不保存；保存后预览失败明确提示刷新，避免重复导入。保留原生物料栏单行布局限制。内部 `header.ts` 的 `manageUndo` 参数让批量物料写入复用外层撤销组。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

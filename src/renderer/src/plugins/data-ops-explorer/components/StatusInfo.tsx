@@ -36,7 +36,7 @@ export function StatusInfo(): ReactElement {
             size="xs"
             variant="ghost"
             active
-          onClick={explorerStore.clearSelection}
+          onClick={() => explorerStore.clearSelection()}
           title="点击清除选择"
             className="!h-auto shrink-0 !px-1.5 !py-0.5 rounded-md font-mono tabular-nums"
         >

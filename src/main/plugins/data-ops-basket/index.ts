@@ -28,9 +28,13 @@ const basketItemSchema = z.object({
 const basketSchema: z.ZodType<BasketItem[]> = z.array(basketItemSchema).max(MAX_ITEMS)
 
 const basketPlugin: Plugin = {
-  inject: ['ipc', 'store'],
+  inject: ['ipc', 'store', 'storage'],
   apply(ctx: Context): void {
     ctx.store.register('basket', { schema: basketSchema, default: [] })
+    ctx.storage.register('data-ops-basket', {
+      title: '文件暂存篮',
+      entries: [{ label: '暂存条目', storeKey: 'basket' }]
+    })
 
     ctx.ipc.handle('basket', {
       list: () => ctx.store.read<BasketItem[]>('basket'),

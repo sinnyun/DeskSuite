@@ -272,7 +272,7 @@ export function Inspector(): ReactElement {
                 size="xs"
                 icon={<X className="w-3.5 h-3.5" />}
                 tooltip="清除选择"
-                onClick={explorerStore.clearSelection}
+                onClick={() => explorerStore.clearSelection()}
               />
             </div>
           </div>

@@ -6,9 +6,16 @@ import { mcpError, mcpText } from '../../services/mcp'
 
 const storagePlugin: Plugin = {
   name: 'canvas-ops-whiteboard-storage',
-  inject: ['ipc', 'store', 'mcp', 'window'],
+  inject: ['ipc', 'store', 'mcp', 'window', 'storage'],
   apply(ctx: Context): void {
     const storage = new BoardStorage(ctx.store)
+    ctx.storage.register('canvas-ops-whiteboard-storage', {
+      title: '画板存储',
+      entries: [
+        { label: '画板索引与场景', relativePath: 'data/leafer-boards', kind: 'directory' },
+        { label: '旧版画板备份', storeKey: 'leafer-board-scenes', description: '迁移前的旧版场景文件，保留作备份' }
+      ]
+    })
     const methods = {
       list: () => storage.list(),
       summaries: () => storage.summaries(),

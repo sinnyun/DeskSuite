@@ -7,7 +7,7 @@ export function ConsoleStatus(): ReactElement {
   const logs = useLogs()
   const { DesktopButton } = useUiKit()
   const view = useConsoleView()
-  const { openBottomTab } = useLayout()
+  const { openFloatingPanel } = useLayout()
   const errors = logs.filter((entry) => entry.level === 'error').length
   const filtered = filterLogs(logs, view).length
   const filtering = filtered !== logs.length
@@ -17,7 +17,7 @@ export function ConsoleStatus(): ReactElement {
       type="button"
       size="xs"
       variant="ghost"
-      onClick={() => openBottomTab('console')}
+      onClick={() => openFloatingPanel('debug-console')}
       title="打开调试控制台"
       className="gap-1.5 px-1"
     >

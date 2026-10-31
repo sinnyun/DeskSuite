@@ -208,9 +208,18 @@ function isPromiseLike<T>(value: T): value is T & PromiseLike<unknown> {
 
 const catalogPlugin: Plugin = {
   name: 'data-provider-catalog',
+  inject: ['storage'],
   apply: async (ctx: Context) => {
     const dataDirectory = join(app.getPath('userData'), 'data')
     await mkdir(dataDirectory, { recursive: true })
+    ctx.storage.register('data-provider-catalog', {
+      title: '数据目录数据库',
+      entries: [{
+        label: '共享 SQLite 数据库',
+        description: '文件标注、搜索索引与版本元数据由多个插件共用此数据库',
+        relativePath: 'data/desksuite.db'
+      }]
+    })
     const database = new DatabaseSync(join(dataDirectory, 'desksuite.db'))
     const service = new CatalogDatabaseService(database)
     service.initialize()

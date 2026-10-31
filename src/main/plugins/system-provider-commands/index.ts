@@ -10,7 +10,7 @@ const plugin: Plugin = {
       return { action }
     }
     const mutating = { mutating: true, impact: 'low' as const, plan: (args: Record<string, unknown>) => ({ operation: '界面操作', args }) }
-    const panelIds = ['analytics', 'basket', 'clipboard', 'commands', 'font-audit', 'global-search', 'launcher', 'notes', 'resources', 'settings', 'updater', 'whiteboard', 'workcrate'] as const
+    const panelIds = ['analytics', 'basket', 'clipboard', 'commands', 'debug-console', 'font-audit', 'global-search', 'launcher', 'notes', 'resources', 'settings', 'updater', 'whiteboard', 'workcrate'] as const
     ctx.commands.register({ id: 'ui.open-panel', title: '打开工作台面板', group: '界面', description: '打开已注册的工作台浮动面板', ...mutating, inputSchema: z.object({ panel: z.enum(panelIds) }), run: (args, _plan, origin) => { const action = `panel.open:${String(args.panel)}`; if (origin === 'mcp') ctx.ipc.broadcast('commands:action', { action }); return { action, panel: args.panel } } })
     ctx.commands.register({ id: 'ui.close-panel', title: '关闭工作台面板', group: '界面', description: '关闭当前浮动面板', ...mutating, run: runAction('panel.close') })
     ctx.commands.register({ id: 'ui.toggle-floating-panel', title: '切换悬浮工作台', group: '界面', description: '切换指定或当前浮动面板', ...mutating, inputSchema: z.object({ panel: z.enum(panelIds).optional() }), run: (args, _plan, origin) => { const action = args.panel ? `floating.toggle:${String(args.panel)}` : 'floating.toggle'; if (origin === 'mcp') ctx.ipc.broadcast('commands:action', { action }); return { action } } })
@@ -25,6 +25,7 @@ const plugin: Plugin = {
       ['system.open-clipboard', '打开剪贴板', 'clipboard.open'], ['system.toggle-theme', '切换明暗主题', 'theme.toggle', 'Ctrl+Shift+L']
     ]
     for (const [id, title, action, keybinding] of actions) ctx.commands.register({ id, title, group: id.startsWith('system.') ? '系统' : '界面', description: title, keybinding, ...mutating, run: runAction(action) })
+    ctx.commands.register({ id: 'system.open-debug-console', title: '打开程序调试信息', group: '系统', description: '打开聚合操作与数据流的调试信息悬浮面板', run: runAction('debug-console.open') })
   }
 }
 

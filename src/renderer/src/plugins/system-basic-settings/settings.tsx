@@ -48,7 +48,7 @@ export function SettingsPanel(): ReactElement | null {
   const activeEntry = entries.find((entry) => entry.namespace === active)
   const categoryEntries = entries.filter((entry) => entry.category === category)
   const adminSections: { id: string; title: string; section: AdminSettingsSection }[] = category === 'program'
-    ? [{ id: 'admin:runtime', title: '运行环境', section: 'runtime' }, { id: 'admin:mcp', title: 'MCP 工具', section: 'mcp' }]
+    ? [{ id: 'admin:runtime', title: '运行环境', section: 'runtime' }, { id: 'admin:storage', title: '存储', section: 'storage' }, { id: 'admin:mcp', title: 'MCP 工具', section: 'mcp' }]
     : [{ id: 'admin:plugins', title: '插件注册表', section: 'plugins' }]
   const activeAdmin = adminSections.find((item) => item.id === active)
   const properties = useMemo(() => Object.entries(activeEntry?.schema.properties ?? {}), [activeEntry])
@@ -73,7 +73,17 @@ export function SettingsPanel(): ReactElement | null {
   }, [isOpen])
 
   useEffect(() => window.bridge.onEvent((channel, payload) => {
-    if (channel === 'settings:open') openFloatingPanel('settings')
+    if (channel === 'settings:open') {
+      const page = (payload as { page?: string } | undefined)?.page
+      if (page === 'plugins') {
+        setCategory('plugin')
+        setActive('admin:plugins')
+      } else if (page === 'runtime' || page === 'storage' || page === 'mcp') {
+        setCategory('program')
+        setActive(`admin:${page}`)
+      }
+      openFloatingPanel('settings')
+    }
     if (channel === 'settings:changed') {
       const event = payload as { namespace?: string }
       if (event.namespace === 'appearance' || event.namespace === 'mcp') void reload()
@@ -108,7 +118,7 @@ export function SettingsPanel(): ReactElement | null {
     <ThemeFloatingPanel title="设置" icon={<Settings className="h-3.5 w-3.5" />} badge={activeEntry?.title ?? activeAdmin?.title} isOpen={isOpen} onClose={closeFloatingPanel} initialX={180} initialY={90} initialWidth={640} initialHeight={500} minWidth={520} minHeight={380}>
       <div className="flex h-full min-h-0 flex-col gap-3">
         <div className="flex shrink-0 items-center gap-2 border-b border-[var(--ds-border)] pb-3 dark:border-[var(--ds-border)]">
-          {(['program', 'plugin'] as const).map((item) => <DesktopButton key={item} type="button" size="sm" variant="ghost" active={category === item} onClick={() => { setCategory(item); const first = entries.find((entry) => entry.category === item); setActive(first?.namespace ?? (item === 'program' ? 'admin:runtime' : 'admin:plugins')); setError(''); setSaved('') }}>{item === 'program' ? '程序设置' : '插件设置'}<span className="ml-2 text-xs text-[var(--ds-text-muted)]">{entries.filter((entry) => entry.category === item).length + (item === 'program' ? 2 : 1)}</span></DesktopButton>)}
+          {(['program', 'plugin'] as const).map((item) => <DesktopButton key={item} type="button" size="sm" variant="ghost" active={category === item} onClick={() => { setCategory(item); const first = entries.find((entry) => entry.category === item); setActive(first?.namespace ?? (item === 'program' ? 'admin:runtime' : 'admin:plugins')); setError(''); setSaved('') }}>{item === 'program' ? '程序设置' : '插件设置'}<span className="ml-2 text-xs text-[var(--ds-text-muted)]">{entries.filter((entry) => entry.category === item).length + (item === 'program' ? 3 : 1)}</span></DesktopButton>)}
         </div>
         <div className="flex min-h-0 flex-1 gap-3">
           <nav className="w-40 shrink-0 space-y-1 overflow-auto border-r border-[var(--ds-border)] pr-2 dark:border-[var(--ds-border)]">

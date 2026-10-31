@@ -85,10 +85,17 @@ async function installedApplications(): Promise<LauncherEntry[]> {
 }
 
 const launcherPlugin: Plugin = {
-    inject: ['ipc', 'store', 'mcp'],
+    inject: ['ipc', 'store', 'mcp', 'storage'],
   apply(ctx: Context): void {
     ctx.store.register('launcher-cache', { schema: CacheSchema, default: { createdAt: 0, entries: [] }, version: 1 })
       ctx.store.register('launcher-library', { schema: LauncherLibrarySchema, default: { groups: [], assignments: {}, metadata: {} }, version: 1 })
+    ctx.storage.register('system-basic-launcher', {
+      title: '启动台',
+      entries: [
+        { label: '应用扫描缓存', storeKey: 'launcher-cache' },
+        { label: '分组与固定项', storeKey: 'launcher-library' }
+      ]
+    })
     const scan = async (): Promise<LauncherEntry[]> => {
       const roots = process.platform === 'win32'
         ? [join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'), join(process.env.ProgramData ?? 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs')]

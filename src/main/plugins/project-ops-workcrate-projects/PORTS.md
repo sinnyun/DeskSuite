@@ -105,3 +105,7 @@ The Boards plugin owns native document/board data and any official VectorCraft C
 The `workcrateProjects` IPC exposes `getProgramPresets()`, `saveProgramPresets(presets)`, and `effectivePresets(projectId?)`. MCP exposes `workcrate_program_presets_get()` and `workcrate_program_presets_save({ presets, confirm: true })`; saves require mutation access and replace the complete list after validation/normalization, then emit `workcrateProjects:changed`.
 
 On first initialization of material defaults, `materialDefaultsVersion` in recent.json advances to 1. Nine missing fields are seeded with 83 suggestions: materialCategory, material, sizeLabel, size, quantity, stock, craft, color, installation. Existing field keys/values are preserved. Later user deletions and empty option lists are not reseeded, including after restart. No project material value is automatically overwritten by suggestions.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

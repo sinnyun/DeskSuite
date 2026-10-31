@@ -1,6 +1,7 @@
 import type { Context, Plugin } from 'cordis'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
+import { mcpText } from '../../services/mcp'
 import { normalize } from '../../services/paths'
 
 export interface SettingsDescriptor {
@@ -39,9 +40,13 @@ const namespacePattern = /^[a-z0-9][a-z0-9._-]{0,63}$/
 
 const settingsPlugin: Plugin = {
   name: 'system-provider-settings',
-  inject: ['ipc', 'store', 'config'],
+  inject: ['ipc', 'store', 'config', 'storage', 'mcp'],
   apply(ctx: Context): void {
     ctx.store.register('settings', { schema: documentSchema, default: { plugins: {} }, version: 1 })
+    ctx.storage.register('system-provider-settings', {
+      title: '程序与插件设置',
+      entries: [{ label: '设置数据', storeKey: 'settings', description: '所有非 MCP 设置命名空间的持久化值' }]
+    })
     const schemas = new Map<string, { schema: z.ZodType; defaultValue: Record<string, unknown>; title: string; description?: string; category: 'program' | 'plugin'; group?: string }>()
     const listeners = new Set<(namespace: string, value: Record<string, unknown>) => void>()
 
@@ -138,6 +143,15 @@ const settingsPlugin: Plugin = {
       listSchemas: () => api.listSchemas(),
       get: (namespace: string) => api.get(namespace),
       set: (namespace: string, value: unknown) => api.set(namespace, value)
+    })
+    ctx.mcp.registerTool('open_settings_page', {
+      description: 'Open the DeskSuite settings panel at a page: runtime, storage, mcp, or plugins.',
+      inputSchema: { page: z.enum(['runtime', 'storage', 'mcp', 'plugins']) },
+      mutating: true,
+      execute: async (args) => {
+        ctx.ipc.broadcast('settings:open', { page: args.page })
+        return mcpText(`已打开设置页：${String(args.page)}`)
+      }
     })
   }
 }

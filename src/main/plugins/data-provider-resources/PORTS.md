@@ -29,3 +29,7 @@ export default {
 ```
 
 See `docs/research/LEAFER_BOARD_SCOPE.md` for approved feature choices and `scripts/verify/resources.mjs` for the live MCP verification contract.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

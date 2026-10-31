@@ -1,6 +1,6 @@
 export interface Bridge {
   invoke(service: string, method: string, ...args: unknown[]): Promise<unknown>
-  onEvent(listener: (channel: string, payload: unknown) => void): () => void
+  onEvent(listener: (channel: string, payload: unknown, traceId?: string) => void): () => void
 }
 
 declare global {

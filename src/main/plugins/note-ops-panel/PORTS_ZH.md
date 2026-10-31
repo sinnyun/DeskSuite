@@ -70,3 +70,7 @@
 草稿与笔记文件分离，保存草稿本身不会执行文件写操作。每篇最多 200,000 字符，拒绝内嵌 `data:image/...;base64` 数据，图片应保留在共享资源系统中；最多保留 100 个路径草稿。笔记正文防抖自动保存；`inspect` 回报 `autoSaveStatus`、`pendingExecution` 和 `error`，面板筛选/布局等 UI 状态不触发写入。
 
 笔记内容在目录授权后自动保存；`inspect` 回报 `autoSaveStatus`、`pendingExecution` 和 `error`。面板筛选、排序、布局等 UI 状态不触发文件写入。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

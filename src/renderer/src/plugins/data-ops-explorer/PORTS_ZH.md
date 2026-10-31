@@ -57,7 +57,8 @@
 | `filesystem` | `statPaths` | 对 `fs:changed` 报告的变更路径取元数据，用于增量更新行 |
 | `filesystem` | `readText` | 检查器文本预览 |
 | `filesystem` | `readImage` | 检查器原图预览 |
-| `thumbnails` | `get(path, 320)` | 延迟加载的 240px JPEG 画廊/胶片条缩略图，由主进程有界缓存及渲染层缓存提供；渲染层最多 60 项 / 3.5 MB |
+| `thumbnails` | `getMany(paths, 320)` | 卡片仅在视口附近批量请求 240px JPEG 缩略图（每次最多 64 项），由主进程有界缓存及渲染层 LRU 提供；渲染层最多 80 项 / 3.5 MB |
+| `fileIcons` | `get(path)` | 无缩略图时卡片与画廊查看区显示的系统文件图标（PNG data URL）；渲染层按扩展名缓存（`.exe` / `.lnk` 等按文件路径） |
 | `filesystem` | `readMedia` | 音频/视频预览（上限 64MB，返回 data URL） |
 | `fileOps` | `saveText` / `approve` / `execute` | 通过计划与批准流程导出目录清单 JSON |
 | `fileOps` | `startDrag` | 为 list/grid/gallery 文件项与当前选中项发起原生系统拖拽 |
@@ -101,3 +102,5 @@ File drag / 文件拖动：list/grid/gallery 的文件项、画廊大图预览�
 视图组合：卡片/列表/画廊与每窗格的 `groupingEnabled` 独立并一同持久化。旧 `viewMode: grouped` 恢复为卡片＋分组开启。统一 152px FileCard 属于资源管理器，并由其向分组布局提供三种区块渲染。嵌入列表采用有限高度虚拟滚动及组内全选，画廊每窗格仅一个预览区：左侧 20%（最小 192px）为单列卡片导航，右侧 80% 为当前文件查看区；分组、折叠及递归范围只作用于左栏。MCP `quick_bookmarks_explorer` 的 view 动作接受可选 viewMode、groupingEnabled、groupBy（kind/modifiedMinute/rating/folder）、includeChildren，返回组合状态。grouped 仅为兼容旧客户端的别名。跨插件分组设置仅走渲染服务。
 
 画廊不再写入旧的 desksuite.explorer.thumbnails 渲染层缓存；共享 FileCard 通过现有主进程缩略图服务请求缩略图。
+
+卡片与画廊回退：没有缩略图时，FileCard 改为显示操作系统文件图标（`fileIcons.get`），不再显示通用类型图标；画廊不支持预览的查看区同样使用系统图标。目录保留原有的主题化文件夹图标。图标查询失败会缓存空结果并回退到类型图标。

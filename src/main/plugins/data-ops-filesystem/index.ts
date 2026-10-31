@@ -246,23 +246,31 @@ async function statPaths(pathsValue: unknown): Promise<FsEntry[]> {
   const paths = (pathsValue as unknown[])
     .filter((item): item is string => typeof item === 'string' && item.length > 0)
     .slice(0, MAX_STAT_PATHS)
-  const results = await Promise.all(paths.map(async (full) => {
-    try {
-      const stat = await fs.stat(full)
-      const isDirectory = stat.isDirectory()
-      const name = full.split(/[\\/]/).filter(Boolean).pop() ?? full
-      return {
-        name,
-        path: full,
-        isDirectory,
-        kind: classify(name, isDirectory),
-        size: isDirectory ? 0 : stat.size,
-        modifiedAt: stat.mtimeMs
+  const results: Array<FsEntry | null> = new Array(paths.length).fill(null)
+  let nextIndex = 0
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex++
+      if (index >= paths.length) return
+      const full = paths[index]
+      try {
+        const stat = await fs.stat(full)
+        const isDirectory = stat.isDirectory()
+        const name = full.split(/[\\/]/).filter(Boolean).pop() ?? full
+        results[index] = {
+          name,
+          path: full,
+          isDirectory,
+          kind: classify(name, isDirectory),
+          size: isDirectory ? 0 : stat.size,
+          modifiedAt: stat.mtimeMs
+        }
+      } catch {
+        results[index] = null
       }
-    } catch {
-      return null
     }
-  }))
+  }
+  await Promise.all(Array.from({ length: Math.min(64, paths.length) }, () => worker()))
   return results.filter((entry): entry is FsEntry => entry !== null)
 }
 
@@ -469,11 +477,15 @@ function formatEntries(result: ListDirResult): string {
 }
 
 const filesystemPlugin: Plugin = {
-  inject: ['ipc', 'mcp', 'window', 'store'],
+  inject: ['ipc', 'mcp', 'window', 'store', 'storage'],
   apply(ctx: Context): void {
     const preferencesKey = 'explorer-drive-preferences'
     const preferencesSchema = z.object({ showNetworkDrives: z.boolean() })
     ctx.store.register(preferencesKey, { schema: preferencesSchema, default: { showNetworkDrives: true } })
+    ctx.storage.register('data-ops-filesystem', {
+      title: '文件浏览器',
+      entries: [{ label: '驱动器显示偏好', storeKey: preferencesKey }]
+    })
     const getDrivePreferences = () => ctx.store.read<z.infer<typeof preferencesSchema>>(preferencesKey)
     const setDrivePreferences = async (input: unknown) => {
       const preferences = preferencesSchema.parse(input)

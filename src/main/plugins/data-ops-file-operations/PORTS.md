@@ -21,3 +21,7 @@
 - `cancel(planId)` also cancels its associated running job. With conflict policy `cancel`, execution still checks every source/target fingerprint first so changed items report `stale`.
 - Item statuses: `completed`, `skipped`, `conflict`, `failed`, `stale`.
 - Undo: the in-memory stack retains up to 20 completed eligible items. It supports rename, same-volume move, and creation of an empty directory. Undo rechecks the saved fingerprint and uses the normal plan/execute path with approval bypassed for the explicit renderer action. Copy, trash, cross-volume moves, overwritten destinations, changed items, and non-empty newly created directories cannot be undone. Undo history does not survive application restart.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

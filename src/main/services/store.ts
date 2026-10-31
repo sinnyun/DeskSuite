@@ -107,6 +107,15 @@ export class StoreService extends Service {
     return [...this.entries.keys()]
   }
 
+  /** Absolute path of a registered document, for diagnostics and storage inventory. */
+  resolvePath(key: string): string {
+    return this.fileFor(key, this.requireEntry(key))
+  }
+
+  listDocuments(): { key: string; path: string }[] {
+    return [...this.entries].map(([key, entry]) => ({ key, path: this.fileFor(key, entry) }))
+  }
+
   async read<T>(key: string): Promise<T> {
     const entry = this.requireEntry(key)
     return (await this.load(key, entry)) as T

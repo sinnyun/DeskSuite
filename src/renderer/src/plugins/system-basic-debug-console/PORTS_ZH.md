@@ -1,42 +1,29 @@
 # PORTS — system-basic-debug-console（渲染层插件）
 
-把工作台日志流呈现出来：活动栏入口、底部抽屉标签、工具栏操作与状态栏计数。
+把程序操作、IPC 请求/响应、主进程广播、MCP 调用和渲染层手工日志聚合到可调整大小的悬浮面板。
 
 ## 元数据
 
 | 字段 | 值 |
 | --- | --- |
 | 类型 | 渲染层插件 |
-| 域 | `system` |
-| 子类 | `basic` |
-| 名称 | `debug-console` |
+| 域 / 子类 / 名称 | `system` / `basic` / `debug-console` |
 | 入口 | `index.tsx` |
 
 ## 槽位贡献
 
-| 槽位 | 贡献 id | 内容 |
+| 槽位 | 贡献 ID | 用途 |
 | --- | --- | --- |
-| `sidebar.activity` | `console.activity` | 终端按钮，切换底部抽屉 |
-| `bottom.tabs` | `console` | 标签「调试控制台」，`label` 组件动态显示错误数徽标 |
-| `bottom.content` | `console` | `ConsolePanel`：级别筛选条 + 搜索 + 按时间倒序的日志列表，可按行展开载荷 |
-| `bottom.toolbar` | `console.toolbar` | 复制筛选结果、导出 JSON、清空按钮 |
-| `statusbar.right` | `console.status` | 日志条数与错误条数胶囊，点击打开控制台标签 |
+| `sidebar.activity` | `console.activity` | 打开或关闭调试悬浮面板 |
+| `floating.panels` | `debug-console.panel` | 1320×820 初始尺寸的可调整面板，包含分类/级别筛选、搜索、调用链折叠、载荷查看、复制、导出和清空 |
+| `statusbar.right` | `console.status` | 显示日志/错误计数，点击打开悬浮面板 |
 
-## 服务
+## 服务与数据来源
 
-提供：无。
-
-消费：`ui`（必需）。
-
-## 数据来源
-
-- 宿主日志仓库（`useLogs`、`logStore`、`log`）—— 渲染层日志，以及主进程
-  `system-basic-runtime-log` 广播的 `runtime:log`。
-- `clipboard.writeText` IPC，用于复制日志文本。
-- `filesystem.saveText` IPC，用于导出日志 JSON（系统保存对话框）。
-
-## 行为说明
-
-- 活动栏按钮以当前日志条数作为徽标。
-- 视图筛选（级别/搜索/展开状态）由插件内部 `consoleViewStore` 维护，不持久化。
-- 清空只作用于渲染层日志仓库，不影响主进程环形缓冲。
+- 消费 `ui` 服务及 workbench 布局和日志仓库。
+- 通过 `runtime:log` 接收 IPC、MCP、主进程广播诊断；渲染层功能日志经 workbench `log()` 接入。
+- workbench bridge 记录渲染端发送/接收阶段，`IpcService` 记录主进程请求/响应数据；同一操作 trace ID 会关联两端记录及同步产生的广播。
+- MCP 调用记录包含参数、结果、耗时和关联 ID。渲染层插件可经 `log()` metadata 记录语义动作/处理/结果，或用 `callWithTrace()` 将多个 IPC 调用归到同一操作链。
+- 调试面板在插件内部通过独立的中文名称目录翻译日志来源、IPC 服务/方法、MCP 工具、事件通道、阶段和常见载荷字段；搜索同时匹配中文显示名与原始标识，原始标识保留在悬停提示及 JSON 导出中。未知标识使用中文兜底名称，不改变日志采集和业务服务。
+- 每条载荷最多 48 KB，长字符串/长数组会截断；base64 data URL 显示 MIME 类型与估算字节数；凭据类字段名会脱敏。
+- 内存环形缓冲最多保留 3000 条。清空只清除当前界面日志仓库，主进程缓冲在应用重启前仍保留。

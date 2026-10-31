@@ -6,3 +6,7 @@
 - 原文件登记/解析只经统一 resources 服务。版本化 Store eagle-source-links v1 按稳定 resourceUri 持久化来源快照（ID、名称、原图路径、缩略图路径、API 地址、文件夹、标签、备注、来源网址、尺寸、大小、评分、更新时间）；最多 5 万条整体 JSON，串行写入和 Store 启动校验；不存图片字节。场景无需增加 Eagle 字段，节点资源链接关联快照。
 - IPC/服务 eagleLinks：link({itemId? 或 location?}) 返回来源；get(reference) 获取缓存或 null，不依赖 Eagle 在线；inspect(reference,refresh=false) 自动识别 .info 原图、确认并持久化来源，普通文件返回 null；open(itemId) 经 shell.openExternal 发送固定 eagle://item/{id}。系统成功派发不等同于外部 Eagle 已完成选中。
 - MCP：eagle_link、eagle_source、eagle_open_item；走原有权限和审计。保存后广播 eagleLinks:changed {reference}；不新增配置、不开放任意命令/API 地址。失败明确报错；刷新会核对当前资源库及原图路径。无自动轮询和元数据删除。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

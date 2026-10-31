@@ -180,8 +180,12 @@ function broadcastChangedDirectories(
 
 const fileOperationsPlugin: Plugin = {
   name: 'data-ops-file-operations',
-  inject: ['ipc', 'mcp', 'window', 'config', 'jobs', 'audit', 'store', 'db', 'commands', 'versionInfo'],
+  inject: ['ipc', 'mcp', 'window', 'config', 'jobs', 'audit', 'store', 'db', 'commands', 'versionInfo', 'storage'],
   apply(ctx: Context): void {
+    ctx.storage.register('data-ops-file-operations', {
+      title: '文件操作作业',
+      entries: [{ label: '作业结果与撤销记录', relativePath: 'data/jobs', kind: 'directory' }]
+    })
     const plans = new Map<string, FilePlan>()
     const undoStack: UndoRecord[] = []
     const approvals = new Map<string, { resolve: (approved: boolean | null) => void; timer: ReturnType<typeof setTimeout> }>()

@@ -59,3 +59,7 @@ None.
 Injects `store` in addition to the dependencies above. `drives` / `list_drives` now return `isNetwork: boolean` on every drive. On Windows, mapped network drive letters are identified using `Win32_LogicalDisk.DriveType=4` through a hidden, bounded PowerShell query; capacity probing is unchanged. If classification is unavailable, entries remain visible as local/unknown. Non-Windows root is not classified as network.
 
 IPC `getDrivePreferences()` returns `{ showNetworkDrives: boolean }`; `setDrivePreferences(preferences)` validates and persists that object, then broadcasts `filesystem:drivePreferences` with the saved value. Store key `explorer-drive-preferences`, default true, independent of workspaces. MCP `explorer_drive_preferences({ showNetworkDrives?: boolean })` reads or updates the same preference (low-impact mutating tool). Visibility affects only the renderer sidebar; `list_drives` always returns all drives. No drive is disconnected and bookmarks/navigation remain usable.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

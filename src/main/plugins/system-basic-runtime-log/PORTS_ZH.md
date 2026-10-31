@@ -1,6 +1,6 @@
 # PORTS — system-basic-runtime-log
 
-主进程运行时日志环形缓冲、MCP 工具调用事件与运行环境信息。
+主进程运行时日志环形缓冲、IPC/MCP/广播链路事件与运行环境信息。
 
 ## 元数据
 
@@ -23,14 +23,14 @@
 
 | 方法 | 参数 | 返回 |
 | --- | --- | --- |
-| `history` | — | `LogEntry[]`，最新的在前（最多 500 条） |
+| `history` | — | `LogEntry[]`，最新的在前（最多 3000 条） |
 | `clear` | — | `true` |
 | `info` | — | `{ appName, appVersion, electron, chrome, node, platform, arch, mcpPort, mcpTools, services }` |
 
 `mcpTools` 为工具信息数组 `{ name, mutating, impact: 'low'|'high' }[]`（按名称排序），供控制中心渲染
 「只读 / 写（低）/ 写（高）」徽标；不带权限档位字段，当前档位另经 `mcp.getAccess` 读取。
 
-`LogEntry` = `{ id, timestamp, level: info|warn|error|event|lifecycle, source, message, payload?, tags? }`。
+`LogEntry` 还支持 `category`、`traceId`、`phase`、`durationMs`、`status`。输入/输出载荷会对凭据字段脱敏，单条最多 48 KB；主进程环形缓冲最多 3000 条。
 
 ## 提供的 MCP 工具
 
@@ -43,7 +43,9 @@
 
 | 事件 | 负载 |
 | --- | --- |
-| `mcp/tool-call` | `{ name, phase: start\|end, ms?, error? }` |
+| `mcp/tool-call` | `{ name, phase: start\|end, traceId, args?, result?, ms?, error? }` |
+| `ipc/invoke` | `{ requestId, service, method, phase, args?, result?, durationMs?, error? }` |
+| `ipc/broadcast` | `{ channel, payload }` |
 
 ## 广播事件
 

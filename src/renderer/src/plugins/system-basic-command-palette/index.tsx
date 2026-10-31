@@ -190,6 +190,7 @@ function CommandPalette(): ReactElement | null {
     else if (action === 'settings.open') openFloatingPanel('settings')
     else if (action === 'launcher.open') openFloatingPanel('launcher')
     else if (action === 'clipboard.open') openFloatingPanel('clipboard')
+    else if (action === 'debug-console.open') openFloatingPanel('debug-console')
     else if (action === 'theme.toggle') toggleTheme()
   }
 

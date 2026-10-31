@@ -103,13 +103,20 @@ function resizeWorkspace(workspace: Workspace, layout: 1 | 2 | 4): Workspace {
 
 export default {
   name: 'system-basic-session',
-  inject: ['ipc', 'store'],
+  inject: ['ipc', 'store', 'storage'],
   apply(ctx: Context): void {
     ctx.store.register('session', { schema: sessionSchema, default: defaultSession, version: 1 })
     ctx.store.register('workspaces', {
       schema: workspacesSchema,
       default: { activeId: null, activePaneId: null, items: [] },
       version: 1
+    })
+    ctx.storage.register('system-basic-session', {
+      title: '工作区会话',
+      entries: [
+        { label: '当前会话', storeKey: 'session' },
+        { label: '工作区列表', storeKey: 'workspaces' }
+      ]
     })
 
     let session = defaultSession

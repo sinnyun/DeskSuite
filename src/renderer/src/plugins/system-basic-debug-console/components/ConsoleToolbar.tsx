@@ -13,13 +13,14 @@ import {
   logPayloadText,
   useConsoleView
 } from '../view'
+import { formatMessage, levelLabel, phaseLabel, sourceLabel } from '../labels'
 
 function serialize(entries: ReturnType<typeof filterLogs>): string {
   return [...entries]
     .reverse()
     .map((entry) => {
       const payload = logPayloadText(entry)
-      return `${entry.timestamp} [${entry.level.toUpperCase()}] ${entry.source} ${entry.message}${payload ? ` ${payload.replace(/\s+/g, ' ')}` : ''}`
+      return `${entry.timestamp} [${levelLabel(entry.level)}] ${sourceLabel(entry.source)} ${formatMessage(entry.message)}${entry.phase ? ` · ${phaseLabel(entry.phase)}` : ''}${payload ? ` ${payload.replace(/\s+/g, ' ')}` : ''}`
     })
     .join('\n')
 }

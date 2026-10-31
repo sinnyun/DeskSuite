@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { Archive, GitBranch, History, RotateCcw, Save, ShieldCheck } from 'lucide-react'
-import { mutateVersion } from './version-actions'
+import { mutateVersion, VersionActionCancelled } from './version-actions'
 import { call, getService, useUiKit, type SelectionSnapshot, type SelectionService } from '../../workbench/sdk'
 
 interface VersionEntry {
@@ -92,7 +92,16 @@ export function FileVersionsPanel(): ReactElement {
   const [previews, setPreviews] = useState<Record<string, string>>({})
   const pathRef = useRef(path)
   const refreshSequence = useRef(0)
-  const previewSequence = useRef(0)
+  const stateRefreshSequence = useRef(0)
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stateRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const refreshRunning = useRef(0)
+  const stateRefreshPending = useRef(false)
+  const flushPendingStateRefresh = useRef<() => void>(() => {})
+  const previewPath = useRef(path)
+  const entriesPath = useRef(path)
+  const previewCache = useRef(new Map<string, string>())
+  const previewRequests = useRef(new Map<string, Promise<string | null>>())
   const activeJob = useRef<{ id: string; path: string } | null>(null)
   const completedJobs = useRef(new Map<string, JobDone>())
   pathRef.current = path
@@ -100,11 +109,13 @@ export function FileVersionsPanel(): ReactElement {
 
   const refresh = useCallback(async (): Promise<void> => {
     const request = ++refreshSequence.current
+    stateRefreshSequence.current += 1
     const requestedPath = path
     if (!requestedPath) {
       setEntries([]); setState(null); setGraph(null); setPreviews({}); setBusy(false)
       return
     }
+    refreshRunning.current += 1
     setBusy(true); setError('')
     try {
       const [listResult, stateResult] = await Promise.all([
@@ -134,6 +145,7 @@ export function FileVersionsPanel(): ReactElement {
           })
         }
       }
+      entriesPath.current = requestedPath
       setEntries([...merged.values()].sort((left, right) =>
         Date.parse(right.createdAt) - Date.parse(left.createdAt) || right.revisionNumber - left.revisionNumber
       ))
@@ -145,19 +157,59 @@ export function FileVersionsPanel(): ReactElement {
       setError(cause instanceof Error ? cause.message : '无法读取 Lore 历史')
     } finally {
       if (refreshSequence.current === request && pathRef.current === requestedPath) setBusy(false)
+      refreshRunning.current -= 1
+      if (refreshRunning.current === 0 && stateRefreshPending.current) {
+        stateRefreshPending.current = false
+        flushPendingStateRefresh.current()
+      }
     }
   }, [path])
+
+  const scheduleRefresh = useCallback((): void => {
+    if (stateRefreshTimer.current) clearTimeout(stateRefreshTimer.current)
+    stateRefreshTimer.current = null
+    if (refreshTimer.current) clearTimeout(refreshTimer.current)
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null
+      void refresh()
+    }, 120)
+  }, [refresh])
+
+  const refreshState = useCallback(async (): Promise<void> => {
+    const requestedPath = path
+    if (!requestedPath) return
+    const request = ++stateRefreshSequence.current
+    try {
+      const next = await call<VersionState>('versions', 'state', requestedPath)
+      if (stateRefreshSequence.current === request && pathRef.current === requestedPath) setState(next)
+    } catch (cause) {
+      if (stateRefreshSequence.current === request && pathRef.current === requestedPath) {
+        setError(cause instanceof Error ? cause.message : '无法读取文件版本状态')
+      }
+    }
+  }, [path])
+
+  const scheduleStateRefresh = useCallback((): void => {
+    if (refreshTimer.current) return
+    if (refreshRunning.current) {
+      stateRefreshPending.current = true
+      return
+    }
+    if (stateRefreshTimer.current) clearTimeout(stateRefreshTimer.current)
+    stateRefreshTimer.current = setTimeout(() => {
+      stateRefreshTimer.current = null
+      void refreshState()
+    }, 120)
+  }, [refreshState])
+  flushPendingStateRefresh.current = scheduleStateRefresh
 
   const settleJob = useCallback((job: JobDone, jobPath: string): void => {
     if (activeJob.current?.id !== job.id) return
     activeJob.current = null
     if (pathRef.current !== jobPath) return
-    if (job.state === 'done') { setNotice(''); void refresh() }
-      else {
-        setNotice('')
-        void refresh().then(() => setError(job.error ?? (job.state === 'canceled' ? '版本任务已取消' : '版本任务失败')))
-      }
-  }, [refresh])
+    setNotice('')
+    if (job.state !== 'done') setError(job.error ?? (job.state === 'canceled' ? '版本任务已取消' : '版本任务失败'))
+  }, [])
 
   const trackJob = useCallback((jobId: string, jobPath: string): void => {
     activeJob.current = { id: jobId, path: jobPath }
@@ -166,31 +218,63 @@ export function FileVersionsPanel(): ReactElement {
   }, [settleJob])
 
   useEffect(() => {
+    entriesPath.current = ''
     setEntries([]); setState(null); setGraph(null); setShowArchivedBranches(false); setPreviews({}); setError(''); setNotice('')
   }, [path])
 
   useEffect(() => {
-    const request = ++previewSequence.current
     const requestedPath = path
-    setPreviews({})
-    if (!requestedPath) return
+    if (previewPath.current !== requestedPath) {
+      previewPath.current = requestedPath
+      previewCache.current.clear()
+      previewRequests.current.clear()
+      setPreviews({})
+    }
+    if (!requestedPath || entriesPath.current !== requestedPath) return
     const available = entries.filter((entry) => entry.thumbnailPath).slice(0, 30)
     if (!available.length) return
     void Promise.all(available.map(async (entry): Promise<[string, string] | null> => {
+      const key = `${requestedPath}\u0000${entry.versionId}`
+      const cached = previewCache.current.get(key)
+      if (cached) return [entry.versionId, cached]
+      let request = previewRequests.current.get(key)
+      if (!request) {
+        request = call<string | null>('versions', 'preview', requestedPath, entry.versionId)
+          .then((preview) => {
+            if (preview) previewCache.current.set(key, preview)
+            return preview
+          })
+          .catch(() => null)
+          .finally(() => previewRequests.current.delete(key))
+        previewRequests.current.set(key, request)
+      }
       try {
-        const preview = await call<string | null>('versions', 'preview', requestedPath, entry.versionId)
+        const preview = await request
         return preview ? [entry.versionId, preview] : null
       } catch { return null }
     })).then((items) => {
-      if (previewSequence.current !== request || pathRef.current !== requestedPath) return
-      setPreviews(Object.fromEntries(items.filter((item): item is [string, string] => item !== null)))
+      if (pathRef.current !== requestedPath) return
+      setPreviews((current) => ({
+        ...current,
+        ...Object.fromEntries(items.filter((item): item is [string, string] => item !== null))
+      }))
     })
   }, [path, entries])
 
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    scheduleRefresh()
+    return () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current)
+      if (stateRefreshTimer.current) clearTimeout(stateRefreshTimer.current)
+      refreshTimer.current = null
+      stateRefreshTimer.current = null
+    }
+  }, [scheduleRefresh])
   useEffect(() => window.bridge.onEvent((channel, payload) => {
     if (channel === 'versions:changed') {
-      if (payload && typeof payload === 'object' && 'path' in payload && (payload as { path?: unknown }).path === path) void refresh()
+      if (!payload || typeof payload !== 'object' || !('path' in payload) || (payload as { path?: unknown }).path !== path) return
+      if ('kind' in payload && (payload as { kind?: unknown }).kind === 'source') scheduleStateRefresh()
+      else scheduleRefresh()
       return
     }
     if (channel === 'job:done' && payload && typeof payload === 'object' && 'id' in payload) {
@@ -200,7 +284,7 @@ export function FileVersionsPanel(): ReactElement {
       const current = activeJob.current
       if (current?.id === job.id) settleJob(job, current.path)
     }
-  }), [path, refresh, settleJob])
+  }), [path, scheduleRefresh, scheduleStateRefresh, settleJob])
 
   const status = useMemo(() => statusCopy(state), [state])
   const pendingRestore = state?.pendingRestore?.pending ? state.pendingRestore : null
@@ -224,7 +308,7 @@ export function FileVersionsPanel(): ReactElement {
       if (pathRef.current !== requestedPath) return
       setTitle('')
       setNotice(`版本保存任务已提交（${result.jobId}）；完成后会自动刷新历史`)
-    } catch (cause) { if (pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法创建版本') }
+    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法创建版本') }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
@@ -242,7 +326,7 @@ export function FileVersionsPanel(): ReactElement {
       trackJob(result.jobId, requestedPath)
       if (pathRef.current !== requestedPath) return
       setNotice(`恢复任务已提交（${result.jobId}）；完成后 Explorer 会刷新文件信息`)
-    } catch (cause) { if (pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法恢复版本') }
+    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法恢复版本') }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
@@ -253,7 +337,7 @@ export function FileVersionsPanel(): ReactElement {
     try {
       await mutateVersion('reconcile', [requestedPath, true], '同步版本信息？此操作不会修改原文件。')
       if (pathRef.current === requestedPath) await refresh()
-    } catch (cause) { if (pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '版本信息同步失败') }
+    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '版本信息同步失败') }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
@@ -268,7 +352,7 @@ export function FileVersionsPanel(): ReactElement {
       if (pathRef.current !== requestedPath) return
       await refresh()
       if (pathRef.current === requestedPath) setNotice('已解除恢复阻塞，当前文件内容与 Lore 历史均已保留')
-    } catch (cause) { if (pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法解除中断恢复') }
+    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法解除中断恢复') }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
@@ -281,7 +365,7 @@ export function FileVersionsPanel(): ReactElement {
       trackJob(result.jobId, requestedPath)
       if (pathRef.current === requestedPath) setNotice(`${branchActionNames[action]}任务已提交${result.jobId ? `（${result.jobId}）` : ''}`)
     } catch (cause) {
-      if (pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : `${branchActionNames[action]}失败`)
+      if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : `${branchActionNames[action]}失败`)
     }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }

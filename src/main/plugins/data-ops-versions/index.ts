@@ -7,6 +7,7 @@ import { lstat, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promise
 import { dirname, join, resolve, sep } from 'node:path'
 import { assertWritable, identity, normalize } from '../../services/paths'
 import { mcpError, mcpText } from '../../services/mcp'
+import { assertUiWritable } from './write-access'
 import { z } from 'zod'
 
 const PLUGIN_ID = 'data-ops-versions'
@@ -191,9 +192,21 @@ async function withEntityLock<T>(locks: Map<string, Promise<void>>, entityId: st
 
 const plugin: Plugin = {
   name: PLUGIN_ID,
-  inject: ['ipc', 'mcp', 'jobs', 'audit', 'config', 'db', 'versionInfo'],
+  inject: ['ipc', 'mcp', 'jobs', 'audit', 'config', 'db', 'versionInfo', 'window', 'storage', 'commands'],
   apply(ctx: Context): void {
+    ctx.storage.register(PLUGIN_ID, {
+      title: '文件版本历史',
+      entries: [{ label: '版本对象与预览', relativePath: 'data/versions', kind: 'directory' }]
+    })
     const locks = new Map<string, Promise<void>>()
+
+    function writeOptions(): { allowedRoots: string[]; forbidden: string[] } {
+      return { allowedRoots: ctx.config.get('mcp').writeRoots, forbidden: [app.getPath('userData')] }
+    }
+
+    async function authorizeUiWrite(path: string): Promise<void> {
+      await assertUiWritable(path, [app.getPath('userData')])
+    }
 
     function syncCurrent(entityId: string, versionId: string | null): void {
       const records = ctx.versionInfo.list(entityId)
@@ -343,7 +356,7 @@ const plugin: Plugin = {
         // Persist observation only; engine state and fingerprints are owned by operations.
         if (JSON.stringify(previous.state) === JSON.stringify(observed)) return
         ctx.versionInfo.putSnapshot(entityId, { ...previous, state: observed })
-        ctx.ipc.broadcast('versions:changed', { path: entity.path, entityId, at: Date.now() })
+        ctx.ipc.broadcast('versions:changed', { path: entity.path, entityId, kind: 'source', at: Date.now() })
       })
     }
     const watchEntities = (): void => {
@@ -423,9 +436,8 @@ const plugin: Plugin = {
       if (typeof pathValue !== 'string' || !pathValue.trim()) throw new TypeError('path must be a nonempty string')
       const path = normalize(pathValue)
       await requireRegularFile(path)
-      if (['switch', 'merge', 'resolve'].includes(input.action)) {
-        await assertWritable(path, { allowedRoots: ctx.config.get('mcp').writeRoots, forbidden: [app.getPath('userData')] })
-      }
+      const writesSource = ['switch', 'merge', 'resolve'].includes(input.action)
+      if (writesSource && origin === 'mcp') await assertWritable(path, writeOptions())
       const entity = entityByPath(ctx, path)
       if (!entity) throw new Error('该文件尚无 Lore 历史')
       const expectedSourceSha256 = await sha256File(path)
@@ -438,6 +450,7 @@ const plugin: Plugin = {
           if (previous.pendingMerge && !['resolve', 'abort'].includes(input.action)) {
             throw new Error('请先解决或中止当前待处理的分支合并')
           }
+          if (writesSource && origin === 'ui') await authorizeUiWrite(path)
           const result = await runBridge({
             operation: 'branchAction', root: HISTORY_ROOT, entityId: entity.entityId, sourcePath: path,
             action: input.action, name: input.name, sourceBranch: input.sourceBranch, strategy: input.strategy,
@@ -517,7 +530,7 @@ const plugin: Plugin = {
       RESTORE_CONFIRMATION.parse(confirmed)
       const path = normalize(pathValue)
       await requireRegularFile(path)
-      await assertWritable(path, { allowedRoots: ctx.config.get('mcp').writeRoots, forbidden: [app.getPath('userData')] })
+      if (origin === 'mcp') await assertWritable(path, writeOptions())
       const entity = entityByPath(ctx, path)
       if (!entity) throw new Error('该文件尚无 Lore 历史')
       const expectedSourceSha256 = await sha256File(path)
@@ -544,6 +557,7 @@ const plugin: Plugin = {
             }) as { status?: string }
             if (currentState.status !== 'saved') throw new Error('文件含有未保存修改；请先保存新版本，再恢复历史版本')
           }
+          if (origin === 'ui') await authorizeUiWrite(path)
           if (await sha256File(path) !== expectedSourceSha256) throw new Error('选择恢复版本后文件字节已变化，未覆盖文件')
           const before = await stat(path)
           await runBridge({
@@ -607,8 +621,8 @@ const plugin: Plugin = {
       state,
       create,
       branchGraph,
-      branchAction: (path: unknown, input: unknown, confirm: unknown) => branchAction(path, input, confirm, 'ui'),
-      restore: (path: unknown, versionId: unknown, confirm: unknown) => restore(path, versionId, confirm, 'ui'),
+      branchAction: (path: unknown, input: unknown, confirm: unknown) => branchAction(path, input, confirm, ctx.commands.executionOrigin ?? 'ui'),
+      restore: (path: unknown, versionId: unknown, confirm: unknown) => restore(path, versionId, confirm, ctx.commands.executionOrigin ?? 'ui'),
       abandonInterruptedRestore: (path: unknown, versionId: unknown, confirm: unknown) => abandonInterruptedRestore(path, versionId, confirm, 'ui'),
     })
 

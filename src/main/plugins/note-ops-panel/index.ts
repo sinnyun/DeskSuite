@@ -45,7 +45,7 @@ function assertTextOnly(markdown: string): void {
 }
 
 export default {
-  inject: ['ipc', 'mcp', 'store', 'config', 'window'],
+  inject: ['ipc', 'mcp', 'store', 'config', 'window', 'storage'],
   apply(ctx: Context): void {
     const pending = new Map<string, Reply>()
     const tasks = new Map<string, TaskStatus>()
@@ -62,6 +62,13 @@ export default {
     })
     ctx.store.register(preferencesKey, { schema: preferencesSchema, default: { rootDir: null, lastNote: null, recentPaths: [] } })
     ctx.store.register('note-panel-drafts', { schema: draftSchema, default: { entries: [] } })
+    ctx.storage.register('note-ops-panel', {
+      title: '笔记面板',
+      entries: [
+        { label: '笔记目录与最近文件', storeKey: preferencesKey },
+        { label: '编辑草稿', storeKey: 'note-panel-drafts' }
+      ]
+    })
     ctx.ipc.handle('notePanel', {
       pickDirectory: async () => {
         const options = { title: '选择笔记目录（允许在此目录新建和保存笔记）', properties: ['openDirectory'] as Array<'openDirectory'> }

@@ -58,3 +58,7 @@
 额外注入 store。drives / list_drives 每项增加 isNetwork 布尔值；Windows 使用隐藏执行且有超时的 PowerShell 查询 Win32_LogicalDisk 的 DriveType=4，识别映射为盘符的网络盘。容量探测保持原逻辑。识别不可用时保持条目可见，按本地/未知处理；非 Windows 根目录不标记为网络盘。
 
 IPC getDrivePreferences() 读取 `{ showNetworkDrives: boolean }`；setDrivePreferences(preferences) 校验并保存后广播 filesystem:drivePreferences（载荷为保存的设置）。Store 键 explorer-drive-preferences，默认 true，跨工作区共享并在重启后保留。MCP explorer_drive_preferences({ showNetworkDrives?: boolean }) 读取或修改同一设置（低影响写工具）。只筛选左侧驱动器列表，list_drives 仍返回全部盘，不断开网络盘，不影响收藏及路径导航。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

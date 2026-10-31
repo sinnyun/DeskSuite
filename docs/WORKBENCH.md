@@ -63,13 +63,14 @@ src/renderer/src/workbench/       渲染层宿主（只做容器与状态，不�
   layout.tsx                      分栏尺寸/折叠/活动标签/悬浮面板状态
   theme.tsx                       深浅主题
   logs.ts                         日志总线
+  bridge-api.ts                   IPC 统一调用、渲染端发送/接收记录与可复用 trace ID
   runtime.ts                      bridge 事件与主进程日志接入
   ui-kit.ts                       UI 服务契约（useUiKit）
 src/renderer/src/plugins/
   system-provider-ui-kit/         提供 ui 服务：按钮/输入/卡片/胶囊/侧栏/工作区/悬浮面板
   system-basic-shell/             app.root 外壳：顶栏/活动栏/左右侧栏/工作区/底栏/状态栏/分栏/悬浮层
   system-basic-window-controls/   顶栏窗口按钮 + 拖拽区双击最大化
-  system-basic-debug-console/     底部调试控制台（级别筛选/搜索/载荷展开/导出、动态标签计数）
+  system-basic-debug-console/     调试信息悬浮面板（操作/IPC/MCP/广播聚合、分类筛选、关联链路折叠与载荷查看）
   system-basic-control-center/    插件注册表（含启停）/ 运行环境 / MCP 工具清单
   data-ops-explorer/              文件浏览器（树/面包屑/工具栏/三视图/多选/收藏评分标签/属性检查器）
   data-ops-explorer-insights/     资产统计 + 暂存篮（提供 basket，消费 selection）

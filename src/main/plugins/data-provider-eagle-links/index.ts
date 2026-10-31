@@ -8,10 +8,14 @@ import { EagleClient, itemId, localPath, samePath, sourceSchema } from './eagle'
 import type { EagleSource } from './eagle'
 
 export default {
-  inject: ['resources', 'store', 'ipc', 'mcp'],
+  inject: ['resources', 'store', 'ipc', 'mcp', 'storage'],
   apply(ctx: Context) {
     const key = 'eagle-source-links'
     ctx.store.register(key, { schema: z.array(sourceSchema).max(50000), default: [], version: 1 })
+    ctx.storage.register('data-provider-eagle-links', {
+      title: 'Eagle 来源链接',
+      entries: [{ label: 'Eagle 资源来源索引', storeKey: key }]
+    })
     let records: EagleSource[] = []
     const ready = ctx.store.read<EagleSource[]>(key).then(value => { records = value })
     let writes = Promise.resolve()

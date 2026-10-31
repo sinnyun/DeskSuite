@@ -64,7 +64,8 @@ Consumes:
 | `filesystem` | `statPaths` | Stat changed paths reported by `fs:changed` for incremental row updates |
 | `filesystem` | `readText` | Text preview in inspector |
 | `filesystem` | `readImage` | Full image preview in the inspector |
-| `thumbnails` | `get(path, 320)` | Lazy 240px JPEG gallery/filmstrip thumbnails, backed by the bounded main-process cache and a renderer cache of at most 60 entries / 3.5 MB |
+| `thumbnails` | `getMany(paths, 320)` | Viewport-deferred, batched 240px JPEG card thumbnails (up to 64 paths/request), backed by the bounded main-process cache and renderer LRU (80 entries / 3.5 MB) |
+| `fileIcons` | `get(path)` | OS file icon (PNG data URL) shown in cards and the gallery stage when no thumbnail is available; the renderer caches by extension (per file for `.exe`/`.lnk`-style entries) |
 | `filesystem` | `readMedia` | Audio/video preview (64MB cap, returns a data URL) |
 | `fileOps` | `saveText` / `approve` / `execute` | Export manifest JSON through a planned, approved write operation |
 | `fileOps` | `startDrag` | Start the native OS drag for list/grid/gallery file items and the current selection |
@@ -111,3 +112,5 @@ Toolbar refinement: 28px controls, combined workspace caption and create/pane co
 View composition: display mode list/grid/gallery and per-pane `groupingEnabled` are independent and persisted together. Legacy `viewMode: grouped` restores as grid + grouping enabled. Explorer owns the shared 152px FileCard and supplies list/grid/gallery renderers for each group. Embedded lists use bounded virtual scroll and group-local select-all; gallery has one preview stage per pane, with a 20% single-card-column navigation rail (192px minimum) and an 80% viewer. Group layout, collapse and recursive scope apply to the rail only; the focused file is previewed once. MCP `quick_bookmarks_explorer` action view accepts optional `viewMode`, `groupingEnabled`, `groupBy` (kind/modifiedMinute/rating/folder), `includeChildren`, and returns current composition. Legacy grouped remains an MCP compatibility alias. Group options are passed only via renderer service injection.
 
 Gallery no longer writes the legacy `desksuite.explorer.thumbnails` renderer cache; shared FileCard requests thumbnails through the existing main-process thumbnail service.
+
+Card and gallery fallback: when no thumbnail is available, FileCard shows the operating-system file icon (`fileIcons.get`) instead of the generic kind glyph; the gallery unsupported stage does the same. Directories keep the styled folder glyph. Failed lookups are memoized and fall back to the kind glyph.

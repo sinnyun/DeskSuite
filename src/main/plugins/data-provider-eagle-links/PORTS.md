@@ -7,3 +7,7 @@
 - IPC and injected service eagleLinks: link({itemId? OR location?}) -> EagleSource; get(reference) -> cached EagleSource|null (works without running Eagle); inspect(reference,refresh=false) -> source|null, auto-recognizes .info originals and persists metadata, ordinary files return null; open(itemId) -> {itemId,deepLink}, shell.openExternal with validated fixed eagle://item/{id}. A dispatch success is not proof the external app selected the item.
 - MCP: eagle_link({itemId?,location?}), eagle_source({reference,refresh?}), eagle_open_item({itemId}); registered through existing mcp and permission/audit policy. No arbitrary shell commands, API base overrides or content writes. IPC broadcasts eagleLinks:changed {reference} after a metadata snapshot write; config: none.
 - Failures: API unavailable, trashed/missing item, wrong source or ambiguous siblings report descriptive errors. Cache get is a snapshot; explicit refresh validates against current Eagle library and original path. A revoked/missing unified registration is governed by resources. No automatic polling/watching/deletion of metadata.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

@@ -25,11 +25,15 @@ interface UpdateState {
 
 const updaterPlugin: Plugin = {
   name: 'system-basic-updater',
-  inject: ['ipc', 'store'],
+  inject: ['ipc', 'store', 'storage'],
   apply: async (ctx: Context) => {
     if (!ctx.store.has(settingsKey)) {
       ctx.store.register(settingsKey, { schema: settingsSchema, default: { feedUrl: '' }, version: 1 })
     }
+    ctx.storage.register('system-basic-updater', {
+      title: '应用更新',
+      entries: [{ label: '更新源设置', storeKey: settingsKey }]
+    })
     const settings = await ctx.store.read<z.infer<typeof settingsSchema>>(settingsKey)
     let state: UpdateState = {
       status: 'idle', currentVersion: app.getVersion(),

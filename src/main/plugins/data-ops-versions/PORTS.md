@@ -6,7 +6,7 @@ Lore-backed per-file immutable history service. Metadata is owned by `data-provi
 
 - Domain / class / name: `data` / `ops` / `versions`
 - Entry: `index.ts`
-- Injects: `ipc`, `mcp`, `jobs`, `audit`, `config`, `db`, `versionInfo`
+- Injects: `ipc`, `mcp`, `jobs`, `audit`, `config`, `db`, `versionInfo`, `window`, `storage`, `commands`
 - Lore engine: pinned Rust sidecar at `native/lore-bridge/`, using the same `lore-vm` revision as the reference project.
 
 ## IPC service
@@ -17,12 +17,12 @@ Service: `versions`.
 - `preview(path, versionId)` returns a bounded JPEG data URL only for a version owned by that path. The renderer never opens `userData` paths directly.
 - `state(path)` reads persisted state, current/matching titles, source metadata, pending restore diagnostics, and synchronization state. A background local filesystem observer maintains content state using persisted SHA-256 fingerprints; UI queries never hash files or invoke Lore.
 - `create(path, title)` starts a background job that commits one immutable snapshot. The source digest is captured before queueing and checked by the sidecar before staging; image previews are copied into plugin owned immutable files after the commit.
-- `restore(path, versionId, confirm)` requires `confirm === true`, an existing version entity, a regular file, and a destination within configured MCP write roots. The source SHA-256 captured when the operation is selected must still match immediately before atomic replacement; a retry for the matching pending target resumes an interrupted restore. It refreshes the file index and broadcasts `fs:changed` on success.
+- `restore(path, versionId, confirm)` requires `confirm === true`, an existing version entity, and a regular file. MCP callers must already target a configured MCP write root. Confirmed renderer operations use only the target directory as an operation-local scope, never read or modify `mcp.writeRoots`, and retain forbidden-directory and source SHA-256 checks before replacement; matching pending targets can resume interrupted restores. It refreshes the file index and broadcasts `fs:changed` on success.
 - `abandonInterruptedRestore(path, versionId, confirm)` requires explicit confirmation and a matching pending journal. It rehashes the current source before clearing the journal, and is accepted only when the source changed and does not match the target Lore revision. It preserves source bytes and Lore content. Since it only removes DeskSuite's internal restore journal and never writes the source file, the source path need not be inside an MCP write root; MCP calls still require Full access and `confirm: true`.
 - `branchGraph(path, includeArchived?)` reads and filters the complete persisted graph, including pending merges, without querying Lore.
-- `branchAction(path, { action, ... }, confirm)` supports `create`, `switch`, `archive`, `merge`, `resolve`, and `abort`. Pending merge state is durable; source bytes are replaced only when a branch switch or merge has completed. Switch, merge, and resolve capture and recheck the source SHA-256 before replacement.
+- `branchAction(path, { action, ... }, confirm)` supports `create`, `switch`, `archive`, `merge`, `resolve`, and `abort`. Pending merge state is durable; source bytes are replaced only when a branch switch or merge has completed. Switch, merge, and resolve capture and recheck the source SHA-256 before replacement, and follow the same write-root rules as `restore`.
 
-Restore rejects paths in application `userData`. Mutations and background observations are serialized per entity; database queries continue reading the last complete committed projection during operations.
+Restore and source-writing branch actions never accept paths in application `userData`, and MCP callers are never prompted for authorization: they must satisfy the configured roots up front. Command execution preserves its asynchronous call origin, so MCP `command_run` calls forwarded to IPC still require MCP write roots. Mutations and background observations are serialized per entity; database queries continue reading the last complete committed projection during operations.
 
 ## MCP
 
@@ -38,7 +38,7 @@ MCP and renderer calls use the same service path. Jobs and audit entries report 
 
 ## Events
 
-- `versions:changed` after a successful save, restore, or branch action.
+- `versions:changed` after history changes (`kind: "history"`, omitted for compatibility) or a watcher-only source-status update (`kind: "source"`).
 - `fs:changed` after restore or a branch action that changes source bytes so Explorer reloads the file and visible metadata.
 - Standard `job:progress` / `job:done` from the jobs service.
 
@@ -66,7 +66,11 @@ Branch graph current revision markers use the working-copy revision. While inter
 - `reconcile(path, true)` / MCP `versions_reconcile({path,confirm:true})` explicitly rebuilds the database projection for existing histories or interrupted operations. Full access required; this is never called by normal UI refresh/startup. It does not change the source file or checkout.
 - `versions_storage_info({path})` reads synchronization metadata, fingerprint count, and the process-local Lore launch counter; no engine call.
 - `version_snapshots` stores observed state, source metadata, all historical SHA-256 fingerprints, pending restores, synchronization timestamp, operation marker and last error. Mutation intent is persisted before engine calls; failed synchronization retains the last complete projection and the marker/error for explicit recovery.
-- Missing legacy snapshots display `unknown` until explicitly reconciled. Missing source files do not hide persisted history or previews. Local directory watchers update file availability/content status and publish `versions:changed`; they never invoke Lore.
+- Missing legacy snapshots display `unknown` until explicitly reconciled. Missing source files do not hide persisted history or previews. Local directory watchers update file availability/content status and publish `versions:changed` with `kind: "source"`; they never invoke Lore.
 - Metadata discovery follows entity path rebinding and closes watchers on plugin disposal. Historical fingerprints are materialized from Lore snapshots only during operations/reconciliation into private scratch files which are deleted after hashing. Original file bytes and the working-copy anchor are preserved.
 
 Version UI actions consume command approval plans and execute them before tracking a job. Existing restore/abandon confirmations authorize the matching plan. Version descriptions are optional: an empty title is named `版本 N` inside the entity lock. Business operation failures remain in jobs/audit; the synchronization error field is populated only if rebuilding the read model fails.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

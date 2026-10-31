@@ -14,3 +14,7 @@
 
 
 View composition: display mode list/grid/gallery and per-pane `groupingEnabled` are independent and persisted together. Legacy `viewMode: grouped` restores as grid + grouping enabled. Explorer owns the shared 152px FileCard and supplies list/grid/gallery renderers for each group. Embedded lists use bounded virtual scroll and group-local select-all; gallery has one preview stage per pane, with a 20% single-card-column navigation rail (192px minimum) and an 80% viewer. Group layout, collapse and recursive scope apply to the rail only; the focused file is previewed once. MCP `quick_bookmarks_explorer` action view accepts optional `viewMode`, `groupingEnabled`, `groupBy` (kind/modifiedMinute/rating/folder), `includeChildren`, and returns current composition. Legacy grouped remains an MCP compatibility alias. Group options are passed only via renderer service injection.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

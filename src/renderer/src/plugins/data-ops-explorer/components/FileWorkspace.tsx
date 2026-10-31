@@ -28,6 +28,29 @@ interface GroupedViewService {
   component: ComponentType<GroupedViewProps>
 }
 
+const paneWatchSignatures = new Map<string, string>()
+const paneWatchClearTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function registerPaneWatch(paneId: string, directories: string[]): void {
+  const pendingClear = paneWatchClearTimers.get(paneId)
+  if (pendingClear) clearTimeout(pendingClear)
+  paneWatchClearTimers.delete(paneId)
+  const signature = directories.join('\n')
+  if (paneWatchSignatures.get(paneId) === signature) return
+  paneWatchSignatures.set(paneId, signature)
+  void call('watch', 'setPaneDirectories', paneId, directories).catch(() => {})
+}
+
+function releasePaneWatch(paneId: string): void {
+  const previous = paneWatchClearTimers.get(paneId)
+  if (previous) clearTimeout(previous)
+  paneWatchClearTimers.set(paneId, setTimeout(() => {
+    paneWatchClearTimers.delete(paneId)
+    paneWatchSignatures.delete(paneId)
+    void call('watch', 'clearPane', paneId).catch(() => {})
+  }, 0))
+}
+
 function PaneContent(): ReactElement {
   const state = useExplorer()
   const store = usePaneStoreContext()
@@ -117,16 +140,25 @@ function PaneFrame({
 
   useEffect(() => {
     if (!store) return
-    void call('watch', 'setPaneDirectories', paneId, watchDirectories).catch(() => {})
+    registerPaneWatch(paneId, watchDirectories)
   }, [paneId, store, watchKey])
 
-  useEffect(() => () => {
-    void call('watch', 'clearPane', paneId).catch(() => {})
-  }, [paneId])
+  useEffect(() => () => releasePaneWatch(paneId), [paneId])
 
   useEffect(() => {
     if (!store) return
-    return window.bridge.onEvent((channel, payload) => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let pendingPaths = new Set<string>()
+    let pendingInvalidate = false
+    const flush = (): void => {
+      timer = null
+      const paths = [...pendingPaths]
+      const invalidate = pendingInvalidate
+      pendingPaths = new Set()
+      pendingInvalidate = false
+      void store.applyChanges(paths, invalidate)
+    }
+    const unsubscribe = window.bridge.onEvent((channel, payload) => {
       if (channel !== 'fs:changed' || !payload || typeof payload !== 'object') return
       const event = payload as { dirs?: unknown; paths?: unknown; invalidate?: unknown }
       if (!Array.isArray(event.dirs)) return
@@ -134,14 +166,22 @@ function PaneFrame({
         ? event.paths.filter((path): path is string => typeof path === 'string')
         : []
       if (state.tagFocus) {
-        void store.applyChanges(paths, event.invalidate === true)
-        return
+        for (const path of paths) pendingPaths.add(path)
+        pendingInvalidate ||= event.invalidate === true
+      } else {
+        if (!state.path) return
+        const current = normalizePath(state.path)
+        if (!event.dirs.some((dir) => typeof dir === 'string' && normalizePath(dir) === current)) return
+        for (const path of paths) pendingPaths.add(path)
+        pendingInvalidate ||= event.invalidate === true
       }
-      if (!state.path) return
-      const current = normalizePath(state.path)
-      if (!event.dirs.some((dir) => typeof dir === 'string' && normalizePath(dir) === current)) return
-      void store.applyChanges(paths, event.invalidate === true)
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(flush, 180)
     })
+    return () => {
+      unsubscribe()
+      if (timer) clearTimeout(timer)
+    }
   }, [state.path, state.tagFocus, store])
 
   return (

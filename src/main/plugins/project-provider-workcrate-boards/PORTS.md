@@ -84,3 +84,7 @@ A connected desktop with no open document is normal: automatic revision checks s
 - MCP `workcrate_quick_create_preview({ text })` exposes the same parser without writes. `workcrate_quick_create_open({ projectId, text? })` opens an editable draft through `workcrate:panel-open` with `quickCreate: true` and optional `table`.
 - MCP `workcrate_boards_quick_create({ projectId, table, reuseInitial?: true, confirm: true })` uses configured full access/write roots. The UI authorizes only the existing associated document folder. Returns `{ count, reusedInitial, boards }`.
 - Each batch runs serially per project in one native undo group. Row failures cancel the group before saving; errors identify the row. A post-save preview failure explicitly asks to refresh instead of importing again. Native material-bar layout limits still apply. `header.ts` accepts an internal `manageUndo` flag so batch writes share their outer undo group.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

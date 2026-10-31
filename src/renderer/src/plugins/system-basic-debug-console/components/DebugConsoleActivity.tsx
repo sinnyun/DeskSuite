@@ -4,21 +4,18 @@ import { useLayout, useLogs, useUiKit } from '../../../workbench/sdk'
 
 export function DebugConsoleActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { activeBottomTab, bottomCollapsed, openBottomTab, toggleBottomCollapsed } = useLayout()
+  const { activeFloatingPanel, toggleFloatingPanel } = useLayout()
   const logs = useLogs()
-  const active = activeBottomTab === 'console' && !bottomCollapsed
+  const active = activeFloatingPanel === 'debug-console'
 
   return (
     <ActivityButton
       icon={<Terminal className="w-4 h-4" />}
-      label="控制台"
+      label="调试"
       active={active}
       badge={logs.length > 0 ? logs.length : undefined}
-      tooltip="调试控制台（点击展开/折叠）"
-      onClick={() => {
-        if (active) toggleBottomCollapsed()
-        else openBottomTab('console')
-      }}
+      tooltip="打开或关闭调试信息悬浮面板"
+      onClick={() => toggleFloatingPanel('debug-console')}
     />
   )
 }

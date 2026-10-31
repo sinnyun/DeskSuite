@@ -47,10 +47,18 @@ function imagePng(): Buffer | null {
 }
 
 const clipboardPlugin: Plugin = {
-  inject: ['ipc', 'mcp', 'store'],
+  inject: ['ipc', 'mcp', 'store', 'storage'],
   apply(ctx: Context) {
     ctx.store.register('clipboard-history', { schema: HistorySchema, default: [], version: 1 })
     ctx.store.register('clipboard-groups', { schema: ClipboardGroupsSchema, default: [], version: 1 })
+    ctx.storage.register('system-basic-clipboard', {
+      title: '剪贴板历史',
+      entries: [
+        { label: '历史条目', storeKey: 'clipboard-history' },
+        { label: '分组', storeKey: 'clipboard-groups' },
+        { label: '图片缓存', relativePath: 'data/clipboard-images', kind: 'directory' }
+      ]
+    })
     const imageDir = join(app.getPath('userData'), 'data', 'clipboard-images')
     let imageWriteCursor = 0
 

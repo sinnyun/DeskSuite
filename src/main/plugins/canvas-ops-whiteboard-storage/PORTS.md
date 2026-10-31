@@ -15,3 +15,7 @@
 - MCP `whiteboard_panel({action,boardId?,sceneJson?,command?,args?})`: actions `open`, `replace`, `flush`, `inspect`, `command`. Commands are supplied by renderer plugins. `new({title?})` and `removeBoard` are panel commands; `inspect` returns the complete renderer snapshot plus engine name. `replace` validates through main storage before loading. Caller must open the panel before viewport-only commands such as media/export/transform.
 - Broadcast `whiteboard:action` with the above arguments and `requestId`; renderer acknowledges `whiteboard.complete`. Timeout 15 seconds; pending calls fail on plugin disposal.
 - No filesystem listener, new window, host modification, or browser domain storage.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

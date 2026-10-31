@@ -14,11 +14,13 @@ import { useUiKit } from '../../../workbench/sdk'
 import { explorerStore, useExplorer, visibleEntries, type FsEntry } from '../store'
 import { EntryIcon } from '../EntryIcon'
 import { KIND_LABEL, formatBytes, formatDate } from '../format'
+import { useFileIcon } from '../useFileIcon'
 import { usePreview } from '../usePreview'
 import { FileGridView } from './FileGridView'
 
 function Stage({ entry }: { entry: FsEntry }): ReactElement {
   const preview = usePreview(entry)
+  const systemIcon = useFileIcon(entry, preview.status === 'unsupported')
   const [zoom, setZoom] = useState(100)
   const { DesktopIconButton } = useUiKit()
 
@@ -125,7 +127,9 @@ function Stage({ entry }: { entry: FsEntry }): ReactElement {
         {preview.status === 'unsupported' && (
           <div className="flex flex-col items-center justify-center p-8 rounded-2xl border border-dashed border-[var(--ds-border-strong)] bg-[var(--ds-surface)]/70 max-w-sm text-center">
             <div className="w-14 h-14 flex items-center justify-center text-[var(--ds-text-subtle)]">
-              {entry.kind === 'image' ? <ImageOff className="w-10 h-10" /> : <EntryIcon kind={entry.kind} className="w-10 h-10" />}
+              {systemIcon
+                ? <img data-file-icon src={systemIcon} alt="" aria-hidden="true" draggable={false} className="h-14 w-14 object-contain" />
+                : entry.kind === 'image' ? <ImageOff className="w-10 h-10" /> : <EntryIcon kind={entry.kind} className="w-10 h-10" />}
             </div>
             <span className="mt-2 font-semibold text-xs text-[var(--ds-text-primary)] dark:text-white break-all">
               {entry.name}

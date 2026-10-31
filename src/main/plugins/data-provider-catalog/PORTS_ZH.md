@@ -44,3 +44,7 @@ interface CatalogMigration {
 
 - 本插件不负责文件扫描、标注或搜索功能。
 - 打包态 Electron 的 WAL/FTS5 行为待最终 Windows 验证批次确认。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

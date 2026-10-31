@@ -105,3 +105,7 @@ Boards 插件拥有原生文档/画板数据及官方 VectorCraft CLI 调用；P
 IPC `workcrateProjects` 提供 `getProgramPresets()`、`saveProgramPresets(presets)` 和 `effectivePresets(projectId?)`。MCP 提供 `workcrate_program_presets_get()`、`workcrate_program_presets_save({ presets, confirm: true })`；保存需要写权限，经校验和去重后完整替换字段列表，并广播 `workcrateProjects:changed`。
 
 首次初始化时，recent.json 中的 `materialDefaultsVersion` 升为 1；补齐缺失的 9 类字段、83 个选项：物料类别、物料名称、尺寸标签、尺寸、数量、材质、制作工艺、颜色、安装方式。已有同键字段及选项不覆盖；后续主动删除或清空的内容在重启后也不会重新填入。基础信息不自动覆盖工程物料值。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

@@ -47,3 +47,7 @@ None.
 - `launcher_program_update` (write, full access): set group, display title, and description.
 
 The versioned `launcher-library` store persists groups, assignments, and per-program title/description overrides. Scanner cache entries persist for 24 hours.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

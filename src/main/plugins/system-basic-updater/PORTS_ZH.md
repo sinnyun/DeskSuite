@@ -9,3 +9,7 @@
 - 自动下载和退出安装均关闭；必须由用户明确点击下载和安装。开发版不能检查或安装更新。
 - 使用 `electron-builder.config.cjs` 打包；设置 `DESKSUITE_GITHUB_OWNER` 与 `DESKSUITE_GITHUB_REPO` 后会生成 GitHub 更新元数据。`npm run package:win` 生成 NSIS 安装包，`npm run package:dir` 生成解包目录。
 - 发布需手动完成：将 `release/` 下的 `latest.yml` 和对应安装包上传到配置的 GitHub Releases release。脚本不会创建或上传 Release。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

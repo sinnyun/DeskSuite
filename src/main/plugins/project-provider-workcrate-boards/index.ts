@@ -336,8 +336,12 @@ async function publishNativeCopy(source: string, target: string): Promise<{ dev:
 
 const plugin: Plugin = {
   name: PLUGIN,
-  inject: ['ipc', 'mcp', 'settings', 'window', 'workcrateProjects'],
+  inject: ['ipc', 'mcp', 'settings', 'window', 'workcrateProjects', 'storage'],
   apply(ctx: Context) {
+    ctx.storage.register('project-provider-workcrate-boards', {
+      title: 'VectorCraft 画板配置',
+      entries: [{ label: '各工程 CLI 配置', relativePath: 'workcrate-boards', kind: 'directory' }]
+    })
     ctx.settings.register('vectorcraft', configSchema, { cliExecutable: '', guiExecutable: '', defaultImageFormat: 'png', port: 17979 }, {
       title: 'VectorCraft', description: 'WorkCrate 官方画板程序连接设置', group: '项目管理'
     })

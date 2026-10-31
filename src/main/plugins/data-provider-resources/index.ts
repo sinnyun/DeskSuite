@@ -13,9 +13,13 @@ if (!app.isReady()) protocol.registerSchemesAsPrivileged([{
 }])
 
 export default {
-  inject: ['ipc', 'store', 'mcp'],
+  inject: ['ipc', 'store', 'mcp', 'storage'],
   apply(ctx: Context) {
     const resources = new ResourceRegistry(ctx)
+    ctx.storage.register('data-provider-resources', {
+      title: '统一资源索引',
+      entries: [{ label: '资源登记表', storeKey: 'resource-links' }]
+    })
     ctx.reflect.provide('resources', resources as ResourcesService)
     protocol.handle(SCHEME, (request) => resourceResponse(resources, request))
     const pending = new Map<string, (result: { value?: unknown; error?: string }) => void>()

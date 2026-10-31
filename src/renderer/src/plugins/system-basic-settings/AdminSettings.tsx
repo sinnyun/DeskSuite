@@ -13,8 +13,9 @@ import {
   type PluginCatalogService,
   type RuntimeInfo
 } from '../../workbench/sdk'
+import { StorageSettings } from './StorageSettings'
 
-export type AdminSettingsSection = 'plugins' | 'runtime' | 'mcp'
+export type AdminSettingsSection = 'plugins' | 'runtime' | 'mcp' | 'storage'
 
 const NOOP_SUBSCRIBE = (): (() => void) => () => {}
 const EMPTY_CATALOG: PluginCatalogEntry[] = []
@@ -86,6 +87,8 @@ export function AdminSettings({ section }: { section: AdminSettingsSection }): R
       <Card title={`渲染层服务（${services.length}）`}><Chips items={services} /></Card>
       <DesktopButton size="xs" variant="subtle" icon={<Copy className="h-3 w-3" />} onClick={() => void copyText(JSON.stringify(info, null, 2), '已复制运行环境信息')}>复制环境信息</DesktopButton>
     </> : <p className="text-xs text-[var(--ds-text-subtle)]">正在读取运行环境…</p>)}
+
+    {section === 'storage' && <StorageSettings />}
 
     {section === 'mcp' && <>
       <Card title="MCP 访问与服务器"><Field label="当前级别" value={access ? ACCESS_LABELS[access] : '读取中…'} /><Field label="地址" value={mcpUrl} /><Field label="端口" value={String(info?.mcpPort ?? '—')} /><Field label="协议" value="Streamable HTTP（无状态，仅监听 127.0.0.1）" /><p className="mt-2 text-xs leading-relaxed text-[var(--ds-text-subtle)]">修改访问级别与可写目录请使用上方的「AI 工具与文件权限」设置。</p></Card>

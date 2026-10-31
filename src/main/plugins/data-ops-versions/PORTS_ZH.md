@@ -6,7 +6,7 @@
 
 - 域 / 子类 / 名称：`data` / `ops` / `versions`
 - 入口：`index.ts`
-- 注入：`ipc`、`mcp`、`jobs`、`audit`、`config`、`db`、`versionInfo`
+- 注入：`ipc`、`mcp`、`jobs`、`audit`、`config`、`db`、`versionInfo`、`window`、`storage`、`commands`
 - Lore 引擎：`native/lore-bridge/` 下的 Rust sidecar，固定使用参考项目相同的 `lore-vm` 提交。
 
 ## IPC 服务
@@ -17,12 +17,12 @@
 - `preview(path, versionId)` 仅为该路径拥有的版本返回有大小上限的 JPEG data URL。渲染层不会直接读取 `userData` 路径。
 - `state(path)` 仅读取已持久化文件状态、标题、源文件大小/时间、内容匹配结果与中断恢复诊断。后台本地文件监听根据已存储的 SHA-256 指纹更新状态；界面查询本身既不读取源文件字节，也不启动 Lore。
 - `create(path, title)` 启动后台作业，提交不可变快照。排队前捕获源文件摘要，sidecar 暂存前会校验；提交后将图片预览复制为插件拥有的不可变文件。
-- `restore(path, versionId, confirm)` 要求 `confirm === true`、版本实体已存在、目标是普通文件且位于配置的 MCP 可写根目录内。操作选择时捕获的 SHA-256 必须在原子替换前仍匹配；匹配同一待处理目标时可续做中断恢复。成功后刷新文件索引并广播 `fs:changed`。
+- `restore(path, versionId, confirm)` 要求 `confirm === true`、版本实体已存在且目标是普通文件。MCP 调用必须先位于配置的 MCP 可写根目录内；界面确认后仅以目标所在目录作为本次操作范围，不读取或修改 `mcp.writeRoots`；继续检查禁止目录和替换前源文件 SHA-256，支持续做匹配的中断恢复。成功后刷新文件索引并广播 `fs:changed`。
 - `abandonInterruptedRestore(path, versionId, confirm)` 要求显式确认且与待处理记录匹配；重新计算当前源文件 SHA-256 后才清除恢复日志。只允许源文件已改变且未匹配目标 Lore 版本时解除；保留当前源文件字节和 Lore 内容。它只移除应用自己的恢复日志，不写源文件，因此不要求该路径位于 MCP 写入根；MCP 调用仍要求 Full 权限和 `confirm: true`。
 - `branchGraph(path, includeArchived?)` 仅读取数据库中的完整分支图并过滤归档项，包括待处理合并信息；不调用 Lore。
-- `branchAction(path, { action, ... }, confirm)` 支持 `create`、`switch`、`archive`、`merge`、`resolve`、`abort`。待处理合并状态持久化；只有分支切换或合并完成后才替换源文件字节。切换、合并和解决操作会在替换前校验捕获的源 SHA-256。
+- `branchAction(path, { action, ... }, confirm)` 支持 `create`、`switch`、`archive`、`merge`、`resolve`、`abort`。待处理合并状态持久化；只有分支切换或合并完成后才替换源文件字节。切换、合并和解决操作会在替换前校验捕获的源 SHA-256，并遵循与 `restore` 相同的可写根规则。
 
-恢复会拒绝应用 userData 内的目标。变更和文件监听按实体串行；数据库查询不等待 Lore 操作，始终读取最后完整提交的投影。
+恢复和会改写源文件的分支操作始终拒绝应用 userData 内的目标；MCP 调用不会触发授权弹窗，必须先满足已配置的可写根。共享命令保留异步调用来源，经 `command_run` 转发到 IPC 的 MCP 调用仍受 MCP 可写根约束。变更和文件监听按实体串行；数据库查询不等待 Lore 操作，始终读取最后完整提交的投影。
 
 ## MCP
 
@@ -38,7 +38,7 @@ MCP 与渲染层调用同一服务实现。作业和 audit 记录变更及失败
 
 ## 事件
 
-- 保存、恢复或分支操作成功后广播 `versions:changed`。
+- 保存、恢复或分支操作成功后广播 `versions:changed`（历史变更）；仅文件来源状态变化时广播 `kind: "source"`，让界面只刷新状态。
 - 恢复或会改变源文件字节的分支操作后广播 `fs:changed`，促使 Explorer 刷新文件和可见元信息。
 - 作业进度和完成使用 jobs 服务的 `job:progress` / `job:done`。
 
@@ -67,6 +67,10 @@ Lore bridge 是 JSON Lines 进程，仅在显式服务调用时启动。请求�
 - `versions_storage_info({path})` 仅读取同步时间、操作标记、错误、指纹数量以及当前进程 Lore 启动计数，供诊断和验收。
 - `version_snapshots` 持久化状态、源文件元数据、历史版本 SHA-256 指纹、中断恢复、同步时间、操作标记与失败信息。版本操作读取 Lore 后，用一个 SQLite 事务更新版本条目、当前版本、完整分支图和状态。
 - 变更前持久化操作标记；同步失败保留上一次完整投影并记录错误。旧版本信息缺失时显示待同步，提供显式“同步版本信息”操作。底层异常不会由界面刷新触发重试。
-- 本地目录监听会追踪文件改写、失联以及实体路径重绑，通过数据库更新和 versions:changed 自动通知界面。插件卸载清理监听；监听不调用 Lore。历史指纹只在版本操作或显式同步时导出到私有临时文件计算，计算后清理，不改变工作区或原文件。
+- 本地目录监听会追踪文件改写、失联以及实体路径重绑，通过数据库更新和带 `kind: "source"` 的 versions:changed 自动通知界面。插件卸载清理监听；监听不调用 Lore。历史指纹只在版本操作或显式同步时导出到私有临时文件计算，计算后清理，不改变工作区或原文件。
 
 版本说明允许为空，在实体锁内自动命名为“版本 N”。业务操作失败记录在 jobs/audit；只有读取模型同步本身失败才写 synchronizationError，同步成功清除该错误。
+
+## 存储登记
+
+- 注入 `storage`，在 `apply` 中登记本插件的数据位置；程序设置 →「存储」分页会聚合这些路径与磁盘占用。

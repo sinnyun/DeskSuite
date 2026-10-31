@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import {
   call,
+  callWithTrace,
   getService,
   log,
   type BasketService,
@@ -146,6 +147,18 @@ function toSelectionItem(entry: FsEntry): SelectionItem {
 }
 
 const CASE_INSENSITIVE_PATHS = navigator.platform.toLowerCase().startsWith('win')
+let bootstrapCache: { expiresAt: number; value: Promise<{ drives: DriveInfo[]; quick: QuickItem[] }> } | undefined
+
+function loadExplorerBootstrap(): Promise<{ drives: DriveInfo[]; quick: QuickItem[] }> {
+  if (bootstrapCache && bootstrapCache.expiresAt > Date.now()) return bootstrapCache.value
+  const value = Promise.all([
+    call<DriveInfo[]>('filesystem', 'drives'),
+    call<QuickItem[]>('filesystem', 'quickAccess')
+  ]).then(([drives, quick]) => ({ drives, quick }))
+  bootstrapCache = { expiresAt: Date.now() + 30_000, value }
+  void value.catch(() => { if (bootstrapCache?.value === value) bootstrapCache = undefined })
+  return value
+}
 
 export function normalizePath(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, '').replace(/\\/g, '/')
@@ -170,6 +183,7 @@ export class ExplorerStore {
   private stopMetadata: (() => void) | undefined
   private stopTagEvents: (() => void) | undefined
   private lastDirectory: string | null = null
+  private searchLogTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(readonly paneId = 'pane-1') {
   }
@@ -215,10 +229,7 @@ export class ExplorerStore {
     if (this.initialized) return
     this.initialized = true
     try {
-      const [drives, quick] = await Promise.all([
-        call<DriveInfo[]>('filesystem', 'drives'),
-        call<QuickItem[]>('filesystem', 'quickAccess')
-      ])
+      const { drives, quick } = await loadExplorerBootstrap()
       this.set({ drives, quick })
       if (saved) this.set({ viewMode: saved.viewMode === 'grouped' ? 'grid' : saved.viewMode ?? this.state.viewMode, groupingEnabled: saved.viewMode === 'grouped' ? true : saved.groupingEnabled ?? false })
       const fallback = quick[0]?.path
@@ -232,23 +243,37 @@ export class ExplorerStore {
     }
   }
 
-  async load(path: string, restore?: Partial<PaneSessionState>, retry = 0, preserveCount = 0): Promise<void> {
+  async load(path: string, restore?: Partial<PaneSessionState>, retry = 0, preserveCount = 0, inheritedTraceId?: string): Promise<void> {
+    const traceId = inheritedTraceId ?? `explorer-load-${crypto.randomUUID()}`
     const token = ++this.token
     this.moreToken += 1
     this.set({ status: 'loading', error: null })
+    log('event', 'Explorer', `读取目录 ${path}`, { path, preserveCount, retry }, ['explorer', 'filesystem'], {
+      category: 'action', traceId, phase: '开始', status: 'running'
+    })
     try {
-      const result = await call<{
+      const result = await callWithTrace<{
         path: string
         parent: string | null
         entries: FsEntry[]
         truncated: boolean
           nextCursor?: string | null
           stale?: boolean
-      }>('filesystem', 'listDir', path)
-      if (token !== this.token) return
+      }>(traceId, 'filesystem', 'listDir', path)
+      if (token !== this.token) {
+        log('info', 'Explorer', `忽略过期目录结果 ${result.path}`, { path: result.path, entries: result.entries.length }, ['explorer', 'filesystem'], {
+          category: 'result', traceId, phase: '丢弃过期结果', status: 'ok'
+        })
+        return
+      }
       if (result.stale) {
-        if (retry < 1) await this.load(path, restore, retry + 1, preserveCount)
-        else this.set({ status: 'error', error: '目录持续变化，请手动刷新' })
+        if (retry < 1) await this.load(path, restore, retry + 1, preserveCount, traceId)
+        else {
+          this.set({ status: 'error', error: '目录持续变化，请手动刷新' })
+          log('error', 'Explorer', `目录持续变化 ${path}`, { path, retry }, ['explorer', 'filesystem'], {
+            category: 'result', traceId, phase: '重试耗尽', status: 'error'
+          })
+        }
         return
       }
       const entries = [...result.entries]
@@ -256,15 +281,20 @@ export class ExplorerStore {
       let truncated = result.truncated
       const seen = new Set(entries.map((entry) => entry.path))
       while (entries.length < preserveCount && nextCursor) {
-        const page = await call<{
+        const page = await callWithTrace<{
           entries: FsEntry[]
           truncated: boolean
           nextCursor: string | null
           stale: boolean
-        }>('filesystem', 'listMore', nextCursor)
+        }>(traceId, 'filesystem', 'listMore', nextCursor)
         if (page.stale) {
-          if (retry < 1) await this.load(path, restore, retry + 1, preserveCount)
-          else this.set({ status: 'error', error: '目录持续变化，请手动刷新' })
+          if (retry < 1) await this.load(path, restore, retry + 1, preserveCount, traceId)
+          else {
+            this.set({ status: 'error', error: '目录持续变化，请手动刷新' })
+            log('error', 'Explorer', `目录分页持续变化 ${path}`, { path, retry }, ['explorer', 'filesystem'], {
+              category: 'result', traceId, phase: '重试耗尽', status: 'error'
+            })
+          }
           return
         }
         for (const entry of page.entries) {
@@ -304,15 +334,22 @@ export class ExplorerStore {
         error: null
       })
       void metadataStore.prime(entries.map((entry) => entry.path))
-      log('info', 'Explorer', `打开目录 ${result.path}`, {
+      log('info', 'Explorer', `处理目录结果 ${result.path}`, {
         entries: entries.length,
-        truncated
+        truncated,
+        nextCursor: Boolean(nextCursor),
+        selectedRestored: this.state.selectedPaths.length,
+        focusedPath: this.state.focusedPath
+      }, ['explorer', 'filesystem'], {
+        category: 'processing', traceId, phase: '状态已更新', status: 'ok'
       })
     } catch (error) {
       if (token !== this.token) return
       const message = error instanceof Error ? error.message : String(error)
       this.set({ status: 'error', error: message })
-      log('error', 'Explorer', `打开目录失败：${path}`, message)
+      log('error', 'Explorer', `打开目录失败：${path}`, { path, error: message }, ['explorer', 'filesystem'], {
+        category: 'result', traceId, phase: '处理失败', status: 'error'
+      })
     }
   }
 
@@ -428,13 +465,17 @@ export class ExplorerStore {
   }
 
   showTagAggregate = async (tag: TagFocus): Promise<void> => {
+    const traceId = `explorer-tag-${crypto.randomUUID()}`
     const token = ++this.token
     this.moreToken += 1
     this.set({ status: 'loading', error: null })
+    log('event', 'Explorer', `聚合标签「${tag.name}」`, { tagId: tag.tagId }, ['explorer', 'annotations'], {
+      category: 'action', traceId, phase: '开始', status: 'running'
+    })
     try {
-      const paths = await call<string[]>('annotations', 'pathsForTag', tag.tagId)
+      const paths = await callWithTrace<string[]>(traceId, 'annotations', 'pathsForTag', tag.tagId)
       const entries = paths.length > 0
-        ? await call<FsEntry[]>('filesystem', 'statPaths', paths)
+        ? await callWithTrace<FsEntry[]>(traceId, 'filesystem', 'statPaths', paths)
         : []
       if (token !== this.token) return
       this.anchorPath = null
@@ -459,12 +500,19 @@ export class ExplorerStore {
         error: null
       })
       void metadataStore.prime(entries.map((entry) => entry.path))
-      log('info', 'Explorer', `按标签「${tag.name}」聚合 ${entries.length} 个文件`)
+      log('info', 'Explorer', `处理标签聚合结果「${tag.name}」`, {
+        tagId: tag.tagId, pathCount: paths.length, entryCount: entries.length,
+        missingCount: Math.max(0, paths.length - entries.length)
+      }, ['explorer', 'annotations', 'filesystem'], {
+        category: 'processing', traceId, phase: '聚合完成', status: 'ok'
+      })
     } catch (error) {
       if (token !== this.token) return
       const message = error instanceof Error ? error.message : String(error)
       this.set({ status: 'error', error: message })
-      log('error', 'Explorer', `标签聚合失败：${tag.name}`, message)
+      log('error', 'Explorer', `标签聚合失败：${tag.name}`, { tagId: tag.tagId, error: message }, ['explorer', 'annotations'], {
+        category: 'result', traceId, phase: '处理失败', status: 'error'
+      })
     }
   }
 
@@ -531,10 +579,11 @@ export class ExplorerStore {
     if (path) this.navigate(path)
   }
 
-  select = (path: string | null, mode: SelectionMode = 'replace'): void => {
+  select = (path: string | null, mode: SelectionMode = 'replace', traceId?: string): void => {
     if (!path) {
       this.anchorPath = null
       this.set({ selectedPaths: [], focusedPath: null })
+      this.recordSelection(null, mode, [], traceId)
       return
     }
 
@@ -545,6 +594,7 @@ export class ExplorerStore {
         : [...current, path]
       this.anchorPath = path
       this.set({ selectedPaths: next, focusedPath: path })
+      this.recordSelection(path, mode, next, traceId)
       return
     }
 
@@ -556,57 +606,86 @@ export class ExplorerStore {
         const start = Math.min(from, to)
         const end = Math.max(from, to)
         this.set({ selectedPaths: list.slice(start, end + 1), focusedPath: path })
+        this.recordSelection(path, mode, list.slice(start, end + 1), traceId)
         return
       }
     }
 
     this.anchorPath = path
     this.set({ selectedPaths: [path], focusedPath: path })
+    this.recordSelection(path, mode, [path], traceId)
+  }
+
+  private recordSelection(focusedPath: string | null, mode: SelectionMode, selectedPaths: string[], inheritedTraceId?: string): void {
+    const traceId = inheritedTraceId ?? `explorer-select-${crypto.randomUUID()}`
+    log('event', 'Explorer', focusedPath ? `选择文件 ${focusedPath}` : '清除文件选择', {
+      focusedPath,
+      mode,
+      count: selectedPaths.length,
+      paths: selectedPaths.slice(0, 30),
+      truncated: selectedPaths.length > 30
+    }, ['explorer', 'selection'], { category: 'action', traceId, phase: '选择', status: 'ok' })
   }
 
   selectAll = (): void => {
     const paths = visibleEntries({ ...this.state, entries: [...this.state.entries, ...this.state.descendantEntries] }).map((entry) => entry.path)
     this.set({ selectedPaths: paths, focusedPath: paths[paths.length - 1] ?? null })
     this.anchorPath = paths[0] ?? null
+    this.recordSelection(paths[paths.length - 1] ?? null, 'replace', paths)
   }
 
-  clearSelection = (): void => {
+  clearSelection = (traceId?: string): void => {
     this.anchorPath = null
     this.set({ selectedPaths: [], focusedPath: null })
+    this.recordSelection(null, 'replace', [], traceId)
   }
 
   setSearch = (search: string): void => {
     this.set({ search })
+    if (this.searchLogTimer) clearTimeout(this.searchLogTimer)
+    this.searchLogTimer = setTimeout(() => {
+      this.searchLogTimer = null
+      log('event', 'Explorer', `设置文件搜索条件${search ? '' : '（清空）'}`, {
+        query: search.slice(0, 1000), truncated: search.length > 1000, directory: this.state.path
+      }, ['explorer', 'filter'], { category: 'action', traceId: `explorer-filter-${crypto.randomUUID()}`, phase: '搜索条件', status: 'ok' })
+    }, 350)
   }
 
   setKindFilter = (kindFilter: KindFilter): void => {
     this.set({ kindFilter })
+    log('event', 'Explorer', `筛选文件类型：${kindFilter}`, { kindFilter }, ['explorer', 'filter'], { category: 'action', traceId: `explorer-filter-${crypto.randomUUID()}`, phase: '类型筛选', status: 'ok' })
   }
 
   setTagFilter = (tagFilter: string | null): void => {
     this.set({ tagFilter })
+    log('event', 'Explorer', `筛选标签：${tagFilter ?? '全部'}`, { tagFilter }, ['explorer', 'filter'], { category: 'action', traceId: `explorer-filter-${crypto.randomUUID()}`, phase: '标签筛选', status: 'ok' })
   }
 
   setFavoriteOnly = (favoriteOnly: boolean): void => {
     this.set({ favoriteOnly })
+    log('event', 'Explorer', favoriteOnly ? '仅显示收藏文件' : '显示全部收藏状态', { favoriteOnly }, ['explorer', 'filter'], { category: 'action', traceId: `explorer-filter-${crypto.randomUUID()}`, phase: '收藏筛选', status: 'ok' })
   }
 
   setMinRating = (minRating: number): void => {
     this.set({ minRating })
+    log('event', 'Explorer', `设置最低评分：${minRating}`, { minRating }, ['explorer', 'filter'], { category: 'action', traceId: `explorer-filter-${crypto.randomUUID()}`, phase: '评分筛选', status: 'ok' })
   }
 
   clearFilters = (): void => {
     this.set({ search: '', kindFilter: 'all', tagFilter: null, favoriteOnly: false, minRating: 0 })
+    log('event', 'Explorer', '清除全部文件筛选', { directory: this.state.path }, ['explorer', 'filter'], { category: 'action', traceId: `explorer-filter-${crypto.randomUUID()}`, phase: '清除筛选', status: 'ok' })
   }
 
   setViewMode = (viewMode: ExplorerViewMode): void => {
     // Legacy persisted sessions and MCP clients used grouped as a fourth mode.
     if (viewMode === 'grouped') this.set({ viewMode: 'grid', groupingEnabled: true })
     else this.set({ viewMode })
+    log('event', 'Explorer', `切换文件视图：${viewMode}`, { viewMode }, ['explorer', 'view'], { category: 'action', traceId: `explorer-view-${crypto.randomUUID()}`, phase: '视图切换', status: 'ok' })
   }
 
   setGroupingEnabled = (groupingEnabled: boolean): void => {
     this.set({ groupingEnabled })
+    log('event', 'Explorer', groupingEnabled ? '启用文件分组' : '关闭文件分组', { groupingEnabled }, ['explorer', 'view'], { category: 'action', traceId: `explorer-view-${crypto.randomUUID()}`, phase: '分组设置', status: 'ok' })
   }
 
   setScrollAnchor = (path: string | null, offset: number): void => {
@@ -646,6 +725,9 @@ export class ExplorerStore {
     } else {
       this.set({ sortField, sortOrder: 'asc' })
     }
+    log('event', 'Explorer', `调整文件排序：${this.state.sortField} ${this.state.sortOrder}`, {
+      sortField: this.state.sortField, sortOrder: this.state.sortOrder
+    }, ['explorer', 'sort'], { category: 'action', traceId: `explorer-sort-${crypto.randomUUID()}`, phase: '排序条件', status: 'ok' })
   }
 
   toggleFavorite = (path: string): void => {
@@ -655,14 +737,18 @@ export class ExplorerStore {
 
   setRating = (path: string, rating: number): void => {
     metadataStore.setRating(path, rating)
+    log('event', 'Explorer', `设置文件评分：${path}`, { path, rating }, ['explorer', 'metadata'], { category: 'processing', traceId: `explorer-rating-${crypto.randomUUID()}`, phase: '元数据已更新', status: 'ok' })
   }
 
   addTag = (path: string, tag: string): boolean => {
-    return metadataStore.addTag(path, tag)
+    const changed = metadataStore.addTag(path, tag)
+    log(changed ? 'event' : 'info', 'Explorer', changed ? `添加文件标签：${tag}` : `文件标签未变化：${tag}`, { path, tag, changed }, ['explorer', 'metadata'], { category: 'processing', traceId: `explorer-tag-${crypto.randomUUID()}`, phase: '元数据已处理', status: 'ok' })
+    return changed
   }
 
   removeTag = (path: string, tag: string): void => {
     metadataStore.removeTag(path, tag)
+    log('event', 'Explorer', `移除文件标签：${tag}`, { path, tag }, ['explorer', 'metadata'], { category: 'processing', traceId: `explorer-tag-${crypto.randomUUID()}`, phase: '元数据已更新', status: 'ok' })
   }
 
   openEntry = async (entry: FsEntry): Promise<void> => {

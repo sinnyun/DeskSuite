@@ -44,3 +44,7 @@ All APIs are synchronous. `tx` uses `BEGIN IMMEDIATE` and nested savepoints; asy
 
 - This plugin does not scan files or implement annotation/search behavior.
 - Packaged Electron WAL/FTS5 behavior remains pending the final Windows verification pass.
+
+## Storage registration
+
+- Injects `storage` and registers this plugin's data locations during `apply`; the Settings → Storage page aggregates their paths and on-disk sizes.

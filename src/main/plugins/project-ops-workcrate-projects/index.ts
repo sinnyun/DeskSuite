@@ -926,10 +926,14 @@ class WorkCrateProjectsServiceImpl implements WorkCrateProjectsService {
 
 const plugin = {
   name: PLUGIN_ID,
-  inject: ['ipc', 'store', 'mcp'],
+  inject: ['ipc', 'store', 'mcp', 'storage'],
   async apply(ctx: Context): Promise<() => Promise<void>> {
     const service = new WorkCrateProjectsServiceImpl(ctx)
     await service.initialize()
+    ctx.storage.register(PLUGIN_ID, {
+      title: 'WorkCrate 工程',
+      entries: [{ label: '工程数据与最近列表', relativePath: 'data/workcrate', kind: 'directory' }]
+    })
     const disposeProvider = ctx.reflect.provide('workcrateProjects', service)
 
     ctx.ipc.handle('workcrateProjects', {

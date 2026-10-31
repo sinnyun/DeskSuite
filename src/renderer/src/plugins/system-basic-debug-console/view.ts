@@ -1,31 +1,28 @@
 import { useSyncExternalStore } from 'react'
-import type { LogEntry, LogLevel } from '../../workbench/sdk'
+import type { LogCategory, LogEntry, LogLevel } from '../../workbench/sdk'
+import { formatPayload, searchableLogText } from './labels'
 
 export const LOG_LEVELS: LogLevel[] = ['info', 'warn', 'error', 'event', 'lifecycle']
+export const LOG_CATEGORIES: LogCategory[] = ['action', 'transfer', 'processing', 'result', 'system']
 
 export interface ConsoleViewState {
   levels: LogLevel[]
+  categories: LogCategory[]
+  source: string
   search: string
   expanded: string[]
 }
 
 const INITIAL: ConsoleViewState = {
   levels: [...LOG_LEVELS],
+  categories: [...LOG_CATEGORIES],
+  source: '*',
   search: '',
   expanded: []
 }
 
 export function logPayloadText(entry: LogEntry): string {
-  if (entry.payload === undefined || entry.payload === null) return ''
-  if (typeof entry.payload === 'string') return entry.payload
-  if (typeof entry.payload === 'number' || typeof entry.payload === 'boolean') {
-    return String(entry.payload)
-  }
-  try {
-    return JSON.stringify(entry.payload, null, 2)
-  } catch {
-    return String(entry.payload)
-  }
+  return formatPayload(entry)
 }
 
 class ConsoleViewStore {
@@ -51,12 +48,23 @@ class ConsoleViewStore {
     this.set({ levels })
   }
 
+  toggleCategory = (category: LogCategory): void => {
+    const categories = this.state.categories.includes(category)
+      ? this.state.categories.filter((item) => item !== category)
+      : [...this.state.categories, category]
+    this.set({ categories })
+  }
+
   setSearch = (search: string): void => {
     this.set({ search })
   }
 
+  setSource = (source: string): void => {
+    this.set({ source })
+  }
+
   reset = (): void => {
-    this.set({ levels: [...LOG_LEVELS], search: '' })
+    this.set({ levels: [...LOG_LEVELS], categories: [...LOG_CATEGORIES], source: '*', search: '' })
   }
 
   toggleExpanded = (id: string): void => {
@@ -77,10 +85,9 @@ export function filterLogs(logs: LogEntry[], view: ConsoleViewState): LogEntry[]
   const query = view.search.trim().toLowerCase()
   return logs.filter((entry) => {
     if (!view.levels.includes(entry.level)) return false
+    if (!view.categories.includes(entry.category ?? 'system')) return false
+    if (view.source !== '*' && entry.source !== view.source) return false
     if (!query) return true
-    if (entry.message.toLowerCase().includes(query)) return true
-    if (entry.source.toLowerCase().includes(query)) return true
-    if (logPayloadText(entry).toLowerCase().includes(query)) return true
-    return (entry.tags ?? []).some((tag) => tag.toLowerCase().includes(query))
+    return searchableLogText(entry).includes(query)
   })
 }

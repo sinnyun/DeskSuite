@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import type { Context } from 'cordis'
 import { Service } from 'cordis'
@@ -62,6 +63,10 @@ const MCP_APPROVAL_TIMEOUT_MS = 60_000
 const ACCESS_RANK = { off: 0, read: 1, standard: 2, full: 3 } as const
 
 export class CommandsService extends Service {
+  private executionContext = new AsyncLocalStorage<'ui' | 'mcp'>()
+
+  get executionOrigin(): 'ui' | 'mcp' | undefined { return this.executionContext.getStore() }
+
   private registry = new Map<string, CommandDefinition>()
   private pending = new Map<string, PendingCommand>()
 
@@ -258,7 +263,7 @@ export class CommandsService extends Service {
   }
 
   private async runDefinition(command: CommandDefinition, args: Record<string, unknown>, plan: unknown, origin: 'ui' | 'mcp'): Promise<unknown> {
-    return command.run(args, plan, origin)
+    return this.executionContext.run(origin, () => command.run(args, plan, origin))
   }
 
   private getCommand(id: string): CommandDefinition {
