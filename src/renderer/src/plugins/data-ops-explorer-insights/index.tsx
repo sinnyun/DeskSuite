@@ -34,5 +34,10 @@ export default definePlugin({
   },
   setup: () => {
     log('lifecycle', 'Insights', '资产统计与暂存篮插件已加载', { basketItems: basketStore.list().length })
+    void basketStore.hydrate()
+    const stopEvents = window.bridge.onEvent((channel) => {
+      if (channel === 'basket:changed') void basketStore.hydrate()
+    })
+    return () => stopEvents()
   }
 })

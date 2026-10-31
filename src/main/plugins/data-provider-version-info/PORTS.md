@@ -17,6 +17,8 @@ Typed durable metadata provider for the Lore file history plugin. It stores meta
 - Entity IDs are generated UUIDs. Normalized path identity maps to an entity; moving a file can rebind the path without changing its entity ID or history.
 - Version rows store revision metadata and a current marker, not file bytes. A partial unique index allows at most one current revision per entity.
 - Branch graph snapshots and pending merge state are stored as JSON owned by the provider. The service exposes typed operations only and no arbitrary SQL.
+- SQLite JSON columns are bounded on both reads and writes without changing the database format: parent lists 256 KiB; snapshots 8 MiB / 50,000 state entries / 50,000 fingerprints; branch JSON 16 MiB / 50,000 total revisions / 100,000 total stack points; pending merge JSON 2 MiB. `list(entityId)` is limited to 50,000 rows and 64 MiB total UTF-8 text across entity/version IDs, parent JSON, title, timestamp, content type, and thumbnail path. A SQL aggregate checks count and byte total before detail rows are returned to JavaScript; exceeding either budget fails with a diagnostic error. Read queries also avoid returning individually oversized JSON values for decoding.
+- The production JSON codecs and list-count guard are exercised by `node scripts/verify/version-info-json-budgets.mjs`; this validates encoding/decoding limits, not arbitrary SQLite corruption or the Lore engine.
 - This is a new product store. It performs no import from another product or standalone legacy database.
 
 ## Service contract

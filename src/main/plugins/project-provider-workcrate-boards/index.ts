@@ -7,15 +7,17 @@ import { createConnection } from 'node:net'
 import { app, shell } from 'electron'
 import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
+import { errorMessage } from '../../services/error-text'
 import { assertWritable } from '../../services/paths'
-import { readAllBoardFields, writeBoardFields, type BoardFields, type NativeBoard } from './header'
+import { hasOwnedNote, readAllBoardFields, writeBoardFields, type BoardFields, type NativeBoard } from './header'
 import { parseQuickTable, quickEntries } from './quick-create'
+import { decodeRpcLine, encodeRpcRequest, MAX_PROTOCOL_LINE, parseTextResult } from './sidecar-protocol'
 
 const PLUGIN = 'project-provider-workcrate-boards'
 const CACHE_VERSION = 1
 const MAX_BOARDS = 10_000
-const MAX_PROTOCOL_LINE = 64 * 1024 * 1024
+const MAX_CACHE_BYTES = 64 * 1024 * 1024
 const MCP_TIMEOUT_MS = 65_000
 const A3_WIDTH_PT = 420 * 72 / 25.4
 const A3_HEIGHT_PT = 297 * 72 / 25.4
@@ -47,7 +49,38 @@ interface BoardCache {
   previews: Record<string, string>
   source: DocumentStamp | null
 }
-interface RpcReply { jsonrpc: string; id?: number; result?: unknown; error?: { message?: string; code?: number } }
+const boardInfoSchema = z.object({
+  materialCategory: z.string().max(1024),
+  material: z.string().max(1024),
+  size: z.string().max(1024),
+  sizeLabel: z.string().max(1024),
+  quantity: z.string().max(1024),
+  extra: z.record(z.string().max(256), z.string().max(1024))
+}).strict()
+const workCrateBoardSchema = z.object({
+  id: z.string().min(1).max(512),
+  projectId: z.string().uuid(),
+  binding: z.string().uuid(),
+  nativeId: z.string().regex(/^\d{1,20}$/),
+  index: z.number().int().nonnegative().max(MAX_BOARDS - 1),
+  title: z.string().min(1).max(512),
+  widthPt: z.number().finite().positive().max(1_000_000),
+  heightPt: z.number().finite().positive().max(1_000_000),
+  info: boardInfoSchema
+}).strict()
+const boardCacheSchema = z.object({
+  version: z.literal(CACHE_VERSION),
+  binding: z.string().uuid(),
+  boards: z.array(workCrateBoardSchema).max(MAX_BOARDS),
+  previews: z.record(z.string().min(1).max(600), z.string().min(1).max(1024)).superRefine((value, ctx) => {
+    if (Object.keys(value).length > MAX_BOARDS) ctx.addIssue({ code: 'custom', message: '画板预览缓存条目过多' })
+  }),
+  source: z.object({ modifiedMs: z.number().finite().nonnegative(), size: z.number().int().nonnegative() }).strict().nullable()
+}).strict().superRefine((cache, ctx) => {
+  if (cache.boards.some((board) => board.binding !== cache.binding)) {
+    ctx.addIssue({ code: 'custom', path: ['boards'], message: '画板缓存绑定不一致' })
+  }
+})
 interface ChildHandle { child: ReturnType<typeof spawn>; live: boolean; close(): Promise<void>; isClosed(): boolean; request(method: string, params: unknown): Promise<unknown> }
 export interface WorkCrateBoardsService {
   duplicateProjectDocument(projectId: string, name: string, directory: string): Promise<{ project: { id: string; name: string }; path: string }>
@@ -90,14 +123,6 @@ const boardFieldsSchema = z.object({
 const quickTableSchema = z.object({ columns: z.array(z.string().max(80)).min(1).max(30), rows: z.array(z.array(z.string().max(1024)).max(30)).max(500) })
 const quickCreateSchema = z.object({ projectId: projectIdSchema, table: quickTableSchema, reuseInitial: z.boolean().default(true) })
 
-function parseTextResult(result: unknown): unknown {
-  const record = result as { isError?: boolean; content?: Array<{ type?: string; text?: string }> }
-  if (record?.isError) throw new Error(record.content?.find((part) => part.type === 'text')?.text ?? 'VectorCraft MCP tool failed')
-  const text = record?.content?.find((part) => part.type === 'text')?.text
-  if (text === undefined) throw new Error('VectorCraft MCP tool returned no text result')
-  try { return JSON.parse(text) as unknown } catch { throw new Error('VectorCraft MCP tool returned invalid JSON') }
-}
-
 async function portIsListening(port: number): Promise<boolean> {
   return new Promise((resolveProbe) => {
     const socket = createConnection({ host: '127.0.0.1', port })
@@ -133,24 +158,17 @@ async function startSession(executable: string, projectDirectory: string, readRo
     pending.clear()
   }
   const onLine = (line: string): void => {
-    if (Buffer.byteLength(line, 'utf8') > MAX_PROTOCOL_LINE) {
-      const error = new Error('VectorCraft MCP 回复超过 64 MiB')
-      stopping = true
-      failAll(error)
-      child.kill()
-      return
-    }
-    let reply: RpcReply
-    try { reply = JSON.parse(line) as RpcReply } catch {
-      const error = new Error('VectorCraft MCP 回复不是有效 JSON')
+    let reply: ReturnType<typeof decodeRpcLine>
+    try { reply = decodeRpcLine(line) } catch (failure) {
+      const error = failure instanceof Error ? failure : new Error('VectorCraft MCP 回复不是有效 JSON-RPC 2.0 结构')
       stopping = true
       failAll(error); child.kill(); return
     }
-    if (typeof reply.id !== 'number') return
+    if (!('id' in reply)) return
     const waiter = pending.get(reply.id)
     if (!waiter) return
     pending.delete(reply.id); clearTimeout(waiter.timer)
-    if (reply.error) waiter.reject(new Error(reply.error.message ?? `VectorCraft JSON-RPC error ${reply.error.code ?? ''}`))
+    if ('error' in reply) waiter.reject(new Error(reply.error.message.slice(0, 2048)))
     else waiter.resolve(reply.result)
   }
   child.stdout.on('data', (chunk: Buffer | string) => {
@@ -187,7 +205,8 @@ async function startSession(executable: string, projectDirectory: string, readRo
   const request = (method: string, params: unknown): Promise<unknown> => {
     if (closed || stopping || !child.stdin.writable) return Promise.reject(new Error('VectorCraft MCP 会话已关闭'))
     const id = nextId++
-    const payload = `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`
+    let payload: string
+    try { payload = encodeRpcRequest(id, method, params) } catch (error) { return Promise.reject(error) }
     return new Promise((resolveReply, rejectReply) => {
       const timer = setTimeout(() => {
         pending.delete(id)
@@ -434,22 +453,29 @@ const plugin: Plugin = {
       if (!await ctx.workcrateProjects.getDocumentPath(projectId)) return null
       const file = await cachePath(projectId)
       let cache: BoardCache
-      try { cache = JSON.parse(await readFile(file, 'utf8')) as BoardCache }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw new Error('画板缓存损坏，请执行同步') }
-      if (cache.version !== CACHE_VERSION || !Array.isArray(cache.boards) || !cache.previews || typeof cache.previews !== 'object') {
-        throw new Error('画板缓存版本或结构不受支持')
+      try {
+        const info = await stat(file)
+        if (!info.isFile() || info.size > MAX_CACHE_BYTES) throw new Error('画板缓存文件过大')
+        cache = boardCacheSchema.parse(JSON.parse(await readFile(file, 'utf8')))
       }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw new Error('画板缓存损坏，请执行同步') }
       const binding = await ctx.workcrateProjects.documentBinding(projectId)
-      if (cache.binding !== binding || cache.boards.some((board) => board.projectId !== projectId || board.binding !== binding)) return null
+      if (cache.binding !== binding || cache.boards.some((board) => board.projectId !== projectId)) return null
       return cache
     }
 
     async function writeCache(projectId: string, cache: BoardCache): Promise<void> {
       const file = await cachePath(projectId)
       let old: BoardCache | null = null
-      try { old = JSON.parse(await readFile(file, 'utf8')) as BoardCache } catch { /* 初次构建或缓存损坏 */ }
-      await atomicWrite(file, Buffer.from(JSON.stringify(cache, null, 2), 'utf8'))
-      const retained = new Set(Object.values(cache.previews))
+      try {
+        const info = await stat(file)
+        if (info.isFile() && info.size <= MAX_CACHE_BYTES) old = boardCacheSchema.parse(JSON.parse(await readFile(file, 'utf8')))
+      } catch { /* 初次构建或缓存损坏 */ }
+      const normalized = boardCacheSchema.parse(cache)
+      const bytes = Buffer.from(JSON.stringify(normalized, null, 2), 'utf8')
+      if (bytes.length > MAX_CACHE_BYTES) throw new Error('画板缓存超过 64 MiB 限额')
+      await atomicWrite(file, bytes)
+      const retained = new Set(Object.values(normalized.previews))
       for (const relativePath of Object.values(old?.previews ?? {})) {
         if (retained.has(relativePath)) continue
         const owned = await ownedPreviewPath(projectId, relativePath)
@@ -469,8 +495,10 @@ const plugin: Plugin = {
     async function clearCache(projectId: string): Promise<void> {
       const file = await cachePath(projectId)
       try {
-        const cache = JSON.parse(await readFile(file, 'utf8')) as BoardCache
-        for (const relativePath of Object.values(cache.previews ?? {})) {
+        const info = await stat(file)
+        if (!info.isFile() || info.size > MAX_CACHE_BYTES) throw new Error('画板缓存文件无效')
+        const cache = boardCacheSchema.parse(JSON.parse(await readFile(file, 'utf8')))
+        for (const relativePath of Object.values(cache.previews)) {
           const owned = await ownedPreviewPath(projectId, relativePath)
           if (owned) await rm(owned, { force: true }).catch(() => undefined)
         }
@@ -639,7 +667,7 @@ const plugin: Plugin = {
           const stillOwned = await stat(file).then((info) => info.dev === ownedFileIdentity.dev && info.ino === ownedFileIdentity.ino).catch(() => false)
           if (stillOwned) await rm(file, { force: true }).catch((failure) => { rollbackFailure ??= failure })
           await clearCache(projectId).catch((failure) => { rollbackFailure ??= failure })
-          if (rollbackFailure) throw new Error(`原生文档创建失败且回滚未完成：${error instanceof Error ? error.message : String(error)}；${rollbackFailure instanceof Error ? rollbackFailure.message : String(rollbackFailure)}`)
+          if (rollbackFailure) throw new Error(`原生文档创建失败且回滚未完成：${errorMessage(error, '文档创建失败')}；${errorMessage(rollbackFailure, '回滚失败')}`)
           throw error
         }
       })
@@ -651,7 +679,7 @@ const plugin: Plugin = {
         const document = await createProjectDocument(project.id, directory)
         let relocationWarning: string | null = null
         try { await ctx.workcrateProjects.relocateProject(project.id, directory) }
-        catch (error) { relocationWarning = error instanceof Error ? error.message : String(error) }
+        catch (error) { relocationWarning = errorMessage(error, '工程资料迁移失败') }
         const projectDataPath = await ctx.workcrateProjects.projectDirectory(project.id)
         return { project: { id: project.id, name: project.name }, path: document.path, boards: document.boards, projectDataPath, relocationWarning }
       } catch (error) {
@@ -708,9 +736,7 @@ const plugin: Plugin = {
           const before = parseCatalog(projectId, binding, model, inspect)
           const ownedOnly = (value: unknown): boolean => {
             const node = value as { attrs?: { note?: string }; kind?: { children?: unknown[] } }
-            try {
-              if (JSON.parse(node.attrs?.note ?? '{}').namespace !== 'fileatlas.workcrate') return false
-            } catch { return false }
+            if (!hasOwnedNote(node)) return false
             return (node.kind?.children ?? []).every(ownedOnly)
           }
           const first = before[0]
@@ -738,7 +764,7 @@ const plugin: Plugin = {
                 }
                 await writeBoardFields(client, asNativeBoard(board), entry.info, false)
                 createdIds.add(board.id)
-              } catch (error) { throw new Error(`第 ${index + 1} 行创建失败：${error instanceof Error ? error.message : String(error)}`) }
+              } catch (error) { throw new Error(`第 ${index + 1} 行创建失败：${errorMessage(error, '未知错误')}`) }
             }
             await verifyBoundSession(session, projectId, file, binding)
           } catch (error) {
@@ -750,7 +776,7 @@ const plugin: Plugin = {
           try {
             const boards = await syncCacheFromSession(session, projectId, binding, createdIds)
             return { count: entries.length, reusedInitial: reuse, boards }
-          } catch (error) { throw new Error(`画板已保存，请刷新工程，勿重复创建：${error instanceof Error ? error.message : String(error)}`) }
+          } catch (error) { throw new Error(`画板已保存，请刷新工程，勿重复创建：${errorMessage(error, '预览更新失败')}`) }
         })
       })
     }
@@ -796,7 +822,7 @@ const plugin: Plugin = {
         }
         try { await ctx.workcrateProjects.delete(created.id) }
         catch (cleanupError) {
-          throw new Error(`复制失败且新工程清理未完成：${error instanceof Error ? error.message : String(error)}；${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`)
+          throw new Error(`复制失败且新工程清理未完成：${errorMessage(error, '复制失败')}；${errorMessage(cleanupError, '清理失败')}`)
         }
         throw error
       }
@@ -876,7 +902,7 @@ const plugin: Plugin = {
             }
             return { directory: folder, files, warnings: [...warnings] }
           } catch (error) {
-            throw new Error(`导出未完成，已写入 ${files.length} 个文件（${folder}）：${error instanceof Error ? error.message : String(error)}`)
+            throw new Error(`导出未完成，已写入 ${files.length} 个文件（${folder}）：${errorMessage(error, '文件导出失败')}`)
           }
         }, true)
       })
@@ -912,7 +938,7 @@ const plugin: Plugin = {
             })
             if (syncFailures.delete(project.id)) ctx.ipc.broadcast('workcrate:sync-recovered', { projectId: project.id })
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
+            const message = errorMessage(error, 'VectorCraft 自动同步失败')
             if (syncFailures.get(project.id) !== message) {
               syncFailures.set(project.id, message)
               ctx.ipc.broadcast('workcrate:sync-error', { projectId: project.id, message })
@@ -994,6 +1020,22 @@ const plugin: Plugin = {
         const projectId = projectIdSchema.parse(args.boardId.split(':')[0])
         return updateBoardInfo(args.boardId, args.info, [dirname(await documentPath(projectId))])
       }
+    }, {
+      getConfig: z.tuple([]),
+      setConfig: z.tuple([configSchema]),
+      getDocumentPath: z.tuple([projectIdSchema]),
+      openProjectFolder: z.tuple([projectIdSchema]),
+      openInVectorCraft: z.tuple([projectIdSchema]),
+      boardCatalog: z.tuple([projectIdSchema]),
+      preview: z.tuple([projectIdSchema, z.string().min(1).max(512)]),
+      refresh: z.tuple([projectIdSchema]),
+      createProjectDocument: z.tuple([createSchema]),
+      createPage: z.tuple([projectIdSchema]),
+      previewQuickCreate: z.tuple([z.string().max(1_000_000)]),
+      quickCreate: z.tuple([quickCreateSchema]),
+      reorderPages: z.tuple([z.object({ projectId: projectIdSchema, boardIds: z.array(z.string().min(1).max(512)).min(1).max(MAX_BOARDS) }).strict()]),
+      exportBoards: z.tuple([exportBoardsSchema]),
+      updateInfo: z.tuple([z.object({ boardId: z.string().min(1).max(512), info: boardFieldsSchema }).strict()])
     })
 
     ctx.mcp.registerTool('workcrate_quick_create_preview', {
@@ -1001,7 +1043,7 @@ const plugin: Plugin = {
       inputSchema: { text: z.string().max(1_000_000) },
       execute: async ({ text }) => {
         try { return mcpText(JSON.stringify(parseQuickTable(String(text)))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_quick_create_open', {
@@ -1013,7 +1055,7 @@ const plugin: Plugin = {
           const table = text === undefined ? null : parseQuickTable(String(text))
           ctx.ipc.broadcast('workcrate:panel-open', { projectId, quickCreate: true, table })
           return mcpText(JSON.stringify({ projectId, table }))
-        } catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        } catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_boards_quick_create', {
@@ -1022,7 +1064,7 @@ const plugin: Plugin = {
       mutating: true, impact: 'high',
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await quickCreate(args))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_document_open', {
@@ -1031,7 +1073,7 @@ const plugin: Plugin = {
       mutating: true, impact: 'high',
       execute: async ({ projectId }) => {
         try { return mcpText(JSON.stringify(await openDesktop(String(projectId)))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_boards_export', {
@@ -1040,7 +1082,7 @@ const plugin: Plugin = {
       mutating: true, impact: 'high',
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await exportBoards(args))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_pages_select', {
@@ -1054,7 +1096,7 @@ const plugin: Plugin = {
           const selected = mode === 'all' ? catalog.map((board) => board.id) : mode === 'clear' ? [] : ids
           ctx.ipc.broadcast('workcrate:pages-selection', { projectId, mode, boardIds: selected })
           return mcpText(JSON.stringify({ projectId, mode, boardIds: selected }))
-        } catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        } catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_board_catalog', {
@@ -1062,7 +1104,7 @@ const plugin: Plugin = {
       inputSchema: { projectId: z.string().uuid() },
       execute: async ({ projectId }) => {
         try { return mcpText(JSON.stringify((await readCache(String(projectId)))?.boards ?? [])) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_panel_open', {
@@ -1077,7 +1119,7 @@ const plugin: Plugin = {
       description: '读取 WorkCrate 的 VectorCraft CLI、GUI 和控制端口设置。',
       execute: async () => {
         try { return mcpText(JSON.stringify(configSchema.parse(await ctx.settings.get('vectorcraft')))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_vectorcraft_config_set', {
@@ -1093,7 +1135,7 @@ const plugin: Plugin = {
           if (parsed.guiExecutable.trim()) await access(parsed.guiExecutable)
           await ctx.settings.set('vectorcraft', parsed)
           return mcpText(JSON.stringify(parsed))
-        } catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        } catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_project_create', {
@@ -1103,7 +1145,7 @@ const plugin: Plugin = {
       impact: 'high',
       execute: async ({ name, directory }) => {
         try { return mcpText(JSON.stringify(await createProjectWithDocument(String(name), String(directory)))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_boards_refresh', {
@@ -1113,7 +1155,7 @@ const plugin: Plugin = {
       impact: 'low',
       execute: async ({ projectId }) => {
         try { return mcpText(JSON.stringify(await refresh(String(projectId)))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_board_create_page', {
@@ -1123,7 +1165,7 @@ const plugin: Plugin = {
       impact: 'high',
       execute: async ({ projectId }) => {
         try { return mcpText(JSON.stringify(await createPage(String(projectId)))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_boards_reorder', {
@@ -1132,7 +1174,7 @@ const plugin: Plugin = {
       mutating: true, impact: 'high',
       execute: async ({ projectId, boardIds }) => {
         try { return mcpText(JSON.stringify(await reorderPages(String(projectId), boardIds as string[]))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_board_update_info', {
@@ -1146,7 +1188,7 @@ const plugin: Plugin = {
       impact: 'high',
       execute: async ({ boardId: boardIdValue, info }) => {
         try { return mcpText(JSON.stringify(await updateBoardInfo(String(boardIdValue), info))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_document_create', {
@@ -1156,7 +1198,7 @@ const plugin: Plugin = {
       impact: 'high',
       execute: async ({ projectId, directory }) => {
         try { return mcpText(JSON.stringify(await createProjectDocument(String(projectId), String(directory)))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     return () => { disposed = true; clearInterval(syncTimer) }

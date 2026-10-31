@@ -3,6 +3,7 @@ import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
 import { mcpText } from '../../services/mcp'
 import { currentTraceId } from '../../services/trace-context'
+import { safeLogEntry, safeText } from './payload'
 
 type LogCategory = 'action' | 'transfer' | 'processing' | 'result' | 'system'
 
@@ -24,45 +25,6 @@ interface LogEntry {
 }
 
 const MAX_ENTRIES = 3000
-const MAX_PAYLOAD_CHARS = 48_000
-const SECRET_KEY = /(password|passwd|token|secret|authorization|cookie|credential|private[-_]?key|api[-_]?key)/i
-
-function safePayload(value: unknown, depth = 0): unknown {
-  if (depth > 8) return '[深度限制]'
-  if (typeof value === 'string') {
-    const dataUrl = value.match(/^data:([^;,]+);base64,/)
-    if (dataUrl) return `[二进制数据 ${dataUrl[1]}，约 ${Math.floor((value.length - value.indexOf(',') - 1) * 0.75)} 字节]`
-    return value.length > 12_000 ? `${value.slice(0, 12_000)}…[字符串已截断，共 ${value.length} 字符]` : value
-  }
-  if (value === null || typeof value !== 'object') return value
-  if (Array.isArray(value)) {
-    const items = value.slice(0, 100).map((item) => safePayload(item, depth + 1))
-    if (value.length > 100) items.push(`[其余 ${value.length - 100} 项已省略]`)
-    return items
-  }
-  const result: Record<string, unknown> = {}
-  const entries = Object.entries(value as Record<string, unknown>).slice(0, 200)
-  for (const [key, item] of entries) result[key] = SECRET_KEY.test(key) ? '[已脱敏]' : safePayload(item, depth + 1)
-  if (Object.keys(value).length > entries.length) result.__truncatedKeys = Object.keys(value).length - entries.length
-  return result
-}
-
-function boundedPayload(value: unknown): LogEntry['payload'] {
-  const safe = safePayload(value)
-  try {
-    const serialized = JSON.stringify(safe)
-    if (serialized.length <= MAX_PAYLOAD_CHARS) return safe as LogEntry['payload']
-    return {
-      __truncated: true,
-      preview: serialized.slice(0, MAX_PAYLOAD_CHARS),
-      originalChars: serialized.length,
-      hint: '载荷超过 48 KB；已保留预览以控制调试缓冲区占用'
-    }
-  } catch {
-    return String(value)
-  }
-}
-
 function stamp(): string {
   const now = new Date()
   const pad = (value: number, size = 2): string => String(value).padStart(size, '0')
@@ -94,17 +56,19 @@ const runtimeLogPlugin: Plugin = {
       tags?: string[],
       metadata: Pick<LogEntry, 'category' | 'traceId' | 'phase' | 'durationMs' | 'status'> = {}
     ): LogEntry => {
-      const entry: LogEntry = {
+      const input: LogEntry = {
         id: `main-${Date.now()}-${seq++}`,
         timestamp: stamp(),
         level,
         source,
-        message,
-        payload: payload === undefined ? undefined : boundedPayload(payload),
+        message: safeText(message).slice(0, 4_000),
+        payload,
         tags,
         ...metadata,
         category: metadata.category ?? (level === 'event' ? 'action' : level === 'error' || level === 'warn' ? 'result' : 'system')
       }
+      // Normalize envelope metadata/tags as well as payload before Electron IPC.
+      const entry = safeLogEntry(input) as unknown as LogEntry
       entries = [entry, ...entries].slice(0, MAX_ENTRIES)
       ctx.ipc.broadcast('runtime:log', entry)
       return entry
@@ -128,6 +92,10 @@ const runtimeLogPlugin: Plugin = {
         mcpTools: ctx.mcp.listToolInfo(),
         services: ctx.ipc.listServices()
       })
+    }, {
+      history: z.tuple([]),
+      clear: z.tuple([]),
+      info: z.tuple([])
     })
 
     ctx.mcp.registerTool('get_runtime_logs', {

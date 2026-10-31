@@ -32,6 +32,7 @@
 
 - `selection` — `{ getSnapshot(), subscribe() }`；快照 `{ path, entries, selected }`，表示活动栏的目录与选中项。
 - `panes` — 快照/订阅，以及 `getActiveStore()`、`setActivePane(id)`、`setLayout(1|2|4)`、`activateWorkspace(id)`、`createWorkspace(name)`、`initialize()`、`showTagAggregate({ tagId, name })`、`clearTagFocus()`；提供工作区布局、窗格状态、活动栏与工作区目录。`showTagAggregate` 会把活动窗格切换为标签聚合虚拟列表（含子孙标签的全部文件，跨目录）；任何目录导航都会退出该模式。
+- 窗格状态与工作区窗格目录由 Explorer 插件自有的 Zustand vanilla store 持有。`selection` / `panes` 保持原有同步快照和订阅契约；写入经窗格动作或 `explorerGroupedView` 服务完成。
 
 消费：
 
@@ -55,11 +56,11 @@
 | `filesystem` | `listDir` | 目录列表（懒加载文件夹树同用） |
 | `filesystem` | `listMore` | 追加下一页 200 项，保留选择和滚动状态 |
 | `filesystem` | `statPaths` | 对 `fs:changed` 报告的变更路径取元数据，用于增量更新行 |
-| `filesystem` | `readText` | 检查器文本预览 |
-| `filesystem` | `readImage` | 检查器原图预览 |
+| `filesystem` | `readText` | 检查器文本预览；校验返回路径/正文/截断标记，正文最多 200,000 字符（主进程源文件上限 2 MiB） |
+| `filesystem` | `readImage` | 检查器原图预览；校验返回路径和图片 MIME/base64 data URL（主进程源文件上限 12 MiB） |
 | `thumbnails` | `getMany(paths, 320)` | 卡片仅在视口附近批量请求 240px JPEG 缩略图（每次最多 64 项），由主进程有界缓存及渲染层 LRU 提供；渲染层最多 80 项 / 3.5 MB |
 | `fileIcons` | `get(path)` | 无缩略图时卡片与画廊查看区显示的系统文件图标（PNG data URL）；渲染层按扩展名缓存（`.exe` / `.lnk` 等按文件路径） |
-| `filesystem` | `readMedia` | 音频/视频预览（上限 64MB，返回 data URL） |
+| `filesystem` | `readMedia` | 音频/视频预览；校验返回路径/MIME/data URL（源文件上限 64 MiB） |
 | `fileOps` | `saveText` / `approve` / `execute` | 通过计划与批准流程导出目录清单 JSON |
 | `fileOps` | `startDrag` | 为 list/grid/gallery 文件项与当前选中项发起原生系统拖拽 |
 | `filesystem` | `open` / `reveal` / `pickDirectory` | 系统打开、在文件夹中定位、选择目录 |
@@ -68,7 +69,11 @@
 | `workspaces` | `list` / `create` / `setLayout` / `setPane` / `activate` | 恢复、新建、切换、调整布局并保存工作区与窗格状态 |
 | `watch` | `setPaneDirectories` / `clearPane` | 监听各窗格当前与展开目录；标签聚合模式下监听聚合条目所在的各父目录，全局最多 16 个 |
 
-消费 `fs:changed` bridge 事件。当前目录内的变更采用增量更新：只重新 stat 变更路径，更新已有行、追加新增条目、移除已删除条目，并保留选择与滚动位置；标签聚合视图对已在聚合列表内的路径执行同样的增量更新，目录内未打标签的文件变更会被忽略。仅当 `invalidate` 为 true（单批超过 200 条变更）时整表重载。
+工作区启动与切换时，插件先用本地 Zod schema 解码 `session.get`、`workspaces.list`、`workspaces.create`、`workspaces.activate` 和 `workspaces.setLayout` 返回值，再恢复或替换窗格 store。decoder 会限制工作区目录、窗格、路径列表和字符串长度，并校验持久化筛选/布局枚举。`FileWorkspace` watcher 事件继续使用其独立 decoder。
+
+网络驱动器显示偏好在更新 FileTree 状态前，使用同一个严格插件本地 schema 解码 `filesystem.getDrivePreferences` 返回值和 `filesystem:drivePreferences` 广播；无效事件会忽略并保留最近一次有效设置。
+
+消费 `fs:changed` 前先用插件本地 Zod decoder 校验再触碰窗格状态。接受 watcher `{ paths, dirs, invalidate }` 以及版本/文件操作生产者可选元数据 `{ at?, planId?, jobId? }`；坏载荷忽略。当前目录内的变更采用增量更新：只重新 stat 变更路径，更新已有行、追加新增条目、移除已删除条目，并保留选择与滚动位置；标签聚合视图对已在聚合列表内的路径执行同样的增量更新，目录内未打标签的文件变更会被忽略。`invalidate` 为 true 时整表重载。
 
 ## 渲染层存储
 
@@ -84,7 +89,7 @@
 
 原“当前目录”子目录树替换为 QuickBookmarks 分组，保留快速访问和驱动器。支持新建、重命名、确认删除分组，折叠分组、通过每组 ＋ 批量收藏中间活动窗格选中的文件夹，编辑收藏名称及绝对路径、移除收藏、点击地址跳转。未选文件夹时禁用 ＋；混合选择仅加入文件夹。同组去重，错误内联显示，长路径省略并提供完整悬浮提示。删除操作仅影响收藏引用。
 
-消费 quickBookmarks 的 act / complete IPC，以及 quickBookmarks:changed / quickBookmarks:explorer 事件。setup 安装 MCP 请求监听并在卸载时清理；MCP 和界面复用添加所选文件夹及打开收藏函数。主进程 data-ops-quick-bookmarks 用 Store 持久化，不新增 localStorage 键。
+消费 quickBookmarks 的 act / complete IPC，以及 quickBookmarks:changed / quickBookmarks:explorer 事件。`act` 返回值先通过渲染层插件本地 Zod 分组 schema 解码，再更新 React 状态。setup 安装 MCP 请求监听并在卸载时清理；MCP 和界面复用添加所选文件夹及打开收藏函数。主进程 data-ops-quick-bookmarks 用 Store 持久化，不新增 localStorage 键。
 
 ## 网络驱动盘开关
 

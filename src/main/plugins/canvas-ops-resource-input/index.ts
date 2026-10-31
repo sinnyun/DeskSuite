@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from 'cordis'
-import { mcpError, mcpText } from '../../services/mcp'
+import { z } from 'zod'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 
 export default {
   inject: ['resources', 'ipc', 'mcp', 'storage'],
@@ -26,7 +27,7 @@ export default {
       })
       return ctx.resources.register(path)
     }
-    ctx.ipc.handle('canvasInput', { clipboardImage })
+    ctx.ipc.handle('canvasInput', { clipboardImage }, { clipboardImage: z.tuple([]) })
     ctx.mcp.registerTool('canvas_paste_image', {
       description: 'Persist current system clipboard pixels as an immutable resource and return its stable URI.',
       inputSchema: {},
@@ -35,7 +36,7 @@ export default {
         try {
           return mcpText(JSON.stringify(await clipboardImage()))
         } catch (error) {
-          return mcpError(String(error))
+          return mcpErrorFrom(error)
         }
       }
     })

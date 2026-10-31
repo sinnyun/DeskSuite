@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { call, useUiKit } from '../../workbench/sdk'
+import { callValidated, errorText, useUiKit } from '../../workbench/sdk'
+import { quickTableSchema } from './schemas'
 
 export interface QuickTable { columns: string[]; rows: string[][] }
 const empty = (): QuickTable => ({ columns: ['页面名称', '物料类别', '物料名称', '尺寸标签', '尺寸', '数量'], rows: [Array(6).fill('')] })
@@ -18,9 +19,9 @@ export function QuickCreate({ initial, busy, onBack, onCreate }: { initial: Quic
     const id = ++request.current
     setText(value); setParsing(true); setError('')
     try {
-      const next = await call<QuickTable>('workcrateBoards', 'previewQuickCreate', value)
+      const next = await callValidated(quickTableSchema, 'workcrateBoards', 'previewQuickCreate', value)
       if (id === request.current) { setTable(next); setText('') }
-    } catch (cause) { if (id === request.current) setError(cause instanceof Error ? cause.message : String(cause)) }
+    } catch (cause) { if (id === request.current) setError(errorText(cause, '表格解析失败')) }
     finally { if (id === request.current) setParsing(false) }
   }
   return <section data-quick-create className="flex min-h-0 flex-1 flex-col gap-3 p-4">

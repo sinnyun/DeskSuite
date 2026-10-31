@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from 'react'
+import { createStore } from 'zustand/vanilla'
+import { useStore } from 'zustand'
 import type { LogCategory, LogEntry, LogLevel } from '../../workbench/sdk'
 import { formatPayload, searchableLogText } from './labels'
 
@@ -25,60 +26,36 @@ export function logPayloadText(entry: LogEntry): string {
   return formatPayload(entry)
 }
 
-class ConsoleViewStore {
-  private state: ConsoleViewState = INITIAL
-  private listeners = new Set<() => void>()
+const viewStore = createStore<ConsoleViewState>(() => INITIAL)
 
-  getSnapshot = (): ConsoleViewState => this.state
+export const consoleViewStore = {
+  getSnapshot: viewStore.getState,
+  subscribe: (listener: () => void): (() => void) => viewStore.subscribe(listener),
 
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
+  toggleLevel(level: LogLevel): void {
+    const { levels } = viewStore.getState()
+    viewStore.setState({ levels: levels.includes(level) ? levels.filter((item) => item !== level) : [...levels, level] })
+  },
 
-  private set(patch: Partial<ConsoleViewState>): void {
-    this.state = { ...this.state, ...patch }
-    for (const listener of this.listeners) listener()
-  }
+  toggleCategory(category: LogCategory): void {
+    const { categories } = viewStore.getState()
+    viewStore.setState({ categories: categories.includes(category) ? categories.filter((item) => item !== category) : [...categories, category] })
+  },
 
-  toggleLevel = (level: LogLevel): void => {
-    const levels = this.state.levels.includes(level)
-      ? this.state.levels.filter((item) => item !== level)
-      : [...this.state.levels, level]
-    this.set({ levels })
-  }
+  setSearch: (search: string): void => viewStore.setState({ search }),
 
-  toggleCategory = (category: LogCategory): void => {
-    const categories = this.state.categories.includes(category)
-      ? this.state.categories.filter((item) => item !== category)
-      : [...this.state.categories, category]
-    this.set({ categories })
-  }
+  setSource: (source: string): void => viewStore.setState({ source }),
 
-  setSearch = (search: string): void => {
-    this.set({ search })
-  }
+  reset: (): void => viewStore.setState({ levels: [...LOG_LEVELS], categories: [...LOG_CATEGORIES], source: '*', search: '' }),
 
-  setSource = (source: string): void => {
-    this.set({ source })
-  }
-
-  reset = (): void => {
-    this.set({ levels: [...LOG_LEVELS], categories: [...LOG_CATEGORIES], source: '*', search: '' })
-  }
-
-  toggleExpanded = (id: string): void => {
-    const expanded = this.state.expanded.includes(id)
-      ? this.state.expanded.filter((item) => item !== id)
-      : [...this.state.expanded, id]
-    this.set({ expanded })
+  toggleExpanded(id: string): void {
+    const { expanded } = viewStore.getState()
+    viewStore.setState({ expanded: expanded.includes(id) ? expanded.filter((item) => item !== id) : [...expanded, id] })
   }
 }
 
-export const consoleViewStore = new ConsoleViewStore()
-
 export function useConsoleView(): ConsoleViewState {
-  return useSyncExternalStore(consoleViewStore.subscribe, consoleViewStore.getSnapshot)
+  return useStore(viewStore)
 }
 
 export function filterLogs(logs: LogEntry[], view: ConsoleViewState): LogEntry[] {

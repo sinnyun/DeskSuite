@@ -1,10 +1,10 @@
 import type { ReactElement } from 'react'
 import { Clipboard } from 'lucide-react'
-import { useLayout, useUiKit } from '../../../workbench/sdk'
+import { useLayoutShallow, useUiKit } from '../../../workbench/sdk'
 
 export function ClipboardActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel, openFloatingPanel: state.openFloatingPanel }))
   const active = floatingPanelOpen && activeFloatingPanel === 'clipboard'
 
   return (

@@ -14,6 +14,7 @@ Service: `indexScan`.
 - `status()` returns the currently running job ID and roots.
 - Traversal uses `fs.opendir`, skips symlinks and the default ignored directory names (`node_modules`, `.git`, `$RECYCLE.BIN`, `System Volume Information`). Optional `*` and `?` ignore patterns match entry names or root relative paths.
 - Upserts are committed in batches of 500. Rows absent from the seen set are removed only after every root finishes; canceled or failed scans retain existing rows and never run stale cleanup.
+- Stale cleanup keyset-pages `files` and `folders` by descending `path_key`, reading at most 500 rows at a time. All pages and staging-row removal are enclosed in one outer transaction, so cleanup remains all-or-nothing; nested page transactions use savepoints. Root containment is checked against the normalized path in JavaScript (not SQL `LIKE`). The completed job summary includes `staleFilesRemoved` and `staleFoldersRemoved`; cleanup begins only after a complete scan and does not yield between pages.
 - Synthetic `devlab://` rows are outside filesystem roots and are not affected.
 
 ## MCP

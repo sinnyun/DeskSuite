@@ -11,7 +11,7 @@ import {
   ZoomOut
 } from 'lucide-react'
 import { useUiKit } from '../../../workbench/sdk'
-import { explorerStore, useExplorer, visibleEntries, type FsEntry } from '../store'
+import { explorerStore, useExplorerShallow, visibleEntries, type FsEntry } from '../store'
 import { EntryIcon } from '../EntryIcon'
 import { KIND_LABEL, formatBytes, formatDate } from '../format'
 import { useFileIcon } from '../useFileIcon'
@@ -158,7 +158,12 @@ function Stage({ entry }: { entry: FsEntry }): ReactElement {
 
 export function FileGalleryView({ navigation }: { navigation?: ReactNode } = {}): ReactElement {
   const { DesktopButton } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    entries: s.entries, descendantEntries: s.descendantEntries, search: s.search, kindFilter: s.kindFilter,
+    favoriteOnly: s.favoriteOnly, minRating: s.minRating, tagFilter: s.tagFilter, sortField: s.sortField,
+    sortOrder: s.sortOrder, path: s.path, tagFocus: s.tagFocus, focusedPath: s.focusedPath,
+    status: s.status, error: s.error
+  }))
   const entries = visibleEntries({ ...state, entries: [...state.entries, ...state.descendantEntries] })
   const activeEntry = entries.find(entry => entry.path === state.focusedPath)
     ?? entries.find(entry => !entry.isDirectory) ?? entries[0]

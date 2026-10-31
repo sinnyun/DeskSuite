@@ -1,12 +1,17 @@
 import type { ReactElement } from 'react'
 import { HardDrive, Zap } from 'lucide-react'
 import { useUiKit } from '../../../workbench/sdk'
-import { explorerStore, hasActiveFilters, useExplorer, visibleEntries } from '../store'
+import { explorerStore, hasActiveFilters, useExplorerShallow, visibleEntries } from '../store'
 import { formatBytes } from '../format'
 
 export function StatusInfo(): ReactElement {
   const { DesktopButton } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    entries: s.entries, search: s.search, kindFilter: s.kindFilter, tagFilter: s.tagFilter,
+    favoriteOnly: s.favoriteOnly, minRating: s.minRating, sortField: s.sortField, sortOrder: s.sortOrder,
+    path: s.path, focusedPath: s.focusedPath, viewMode: s.viewMode, tagFocus: s.tagFocus, selectedPaths: s.selectedPaths,
+    truncated: s.truncated
+  }))
   const visible = visibleEntries(state).length
   const folders = state.entries.filter((entry) => entry.isDirectory).length
   const files = state.entries.length - folders

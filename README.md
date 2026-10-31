@@ -196,6 +196,7 @@ node scripts/verify/stop.mjs
 | [AGENTS.md](AGENTS.md) | 项目约定：架构、插件、MCP、验证与命令 |
 | [docs/VERIFY.md](docs/VERIFY.md) | 实机验证脚本、MCP 验收流程与产物约定 |
 | [docs/WORKBENCH.md](docs/WORKBENCH.md) | 工作台插件架构与跨层令牌契约 |
+| [docs/STATE_VALIDATION_PLAN.md](docs/STATE_VALIDATION_PLAN.md) | 非画布共享状态统一到 Zustand、现有 Zod 边界补齐方案与分阶段验收（尚未实施） |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 能力扩展路线图、数据所有权规则与进度台账 |
 | [docs/LEAFERJS.md](docs/LEAFERJS.md) | LeaferJS 集成边界与资源生命周期 |
 | [docs/NOTE_EDITOR.md](docs/NOTE_EDITOR.md) | 笔记插件实现状态、审查发现与约束 |

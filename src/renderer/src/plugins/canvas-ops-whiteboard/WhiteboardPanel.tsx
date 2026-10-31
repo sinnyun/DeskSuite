@@ -57,7 +57,7 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
-import { call, getService, useLayout, useUiKit } from '../../workbench/sdk'
+import { call, getService, useLayoutShallow, useUiKit } from '../../workbench/sdk'
 import { getCanvas } from './contract'
 import type { BoardNode, CanvasService } from './contract'
 import { BoardViewport } from './viewport'
@@ -77,7 +77,7 @@ export function WhiteboardPanel(): ReactElement | null {
 function Panel({ board }: { board: CanvasService }): ReactElement | null {
   const state = useSyncExternalStore(board.subscribe, board.getSnapshot)
   const { ThemeFloatingPanel, DesktopButton, DesktopInput, DesktopSelect } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, openFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, openFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, openFloatingPanel: state.openFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'whiteboard'
   const [search, setSearch] = useState('')
   const [rename, setRename] = useState('')

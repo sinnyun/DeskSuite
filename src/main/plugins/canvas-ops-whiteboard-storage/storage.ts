@@ -1,13 +1,14 @@
 import { z } from 'zod'
 import type { StoreService } from '../../services/store'
 import { validateScene } from './scene'
+import { MAX_BOARD_SUMMARIES, parseBoardSummaryIndex, boardSummaryIndexSchema, type BoardSummary } from './summary-index'
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/)
 const sceneSchema = z.string().max(4 * 1024 * 1024).refine((value) => {
   try { validateScene(value); return true } catch { return false }
 }, '无效的画板场景')
-const indexSchema = z.array(z.object({ id: idSchema, title: z.string() })).nullable()
-type Summary = { id: string; title: string }
+const indexSchema = boardSummaryIndexSchema
+type Summary = BoardSummary
 
 /** Plugin-owned persistence; the shared Store retains atomic rename and backups. */
 export class BoardStorage {
@@ -33,14 +34,13 @@ export class BoardStorage {
   }
   private async load(): Promise<void> {
     if (this.index) return
-    const index = await this.store.read<Summary[] | null>('leafer-board-index')
+    const index = parseBoardSummaryIndex(await this.store.read<Summary[] | null>('leafer-board-index'))
     if (index !== null) { this.index = index; return }
     const legacy = await this.store.read<Record<string, string>>('leafer-board-scenes')
-    const migrated: Summary[] = []
-    for (const [id, json] of Object.entries(legacy)) {
-      await this.store.write(this.key(id), json)
-      migrated.push({ id, title: JSON.parse(json).title })
-    }
+    const entries = Object.entries(legacy)
+    if (entries.length > MAX_BOARD_SUMMARIES) throw new Error(`旧画板数量超过 ${MAX_BOARD_SUMMARIES} 条，拒绝迁移摘要索引`)
+    const migrated = parseBoardSummaryIndex(entries.map(([id, json]) => ({ id, title: JSON.parse(json).title })))!
+    for (const [id, json] of entries) await this.store.write(this.key(id), json)
     // Publish only after all scenes are durable. Legacy remains an untouched backup.
     await this.store.write('leafer-board-index', migrated)
     this.index = migrated
@@ -72,18 +72,19 @@ export class BoardStorage {
     sceneSchema.parse(json)
     json = validateScene(json)
     return this.run(async () => {
+      const existing = this.index!.find(item => item.id === id)
+      const title = JSON.parse(json).title as string
+      const next = existing
+        ? this.index!.map(item => item.id === id ? { id, title } : item)
+        : [...this.index!, { id, title }]
+      parseBoardSummaryIndex(next)
       if (await this.read(id) !== json) {
         await this.store.write(this.key(id), json)
         this.remember(id, json)
       }
-      const title = JSON.parse(json).title as string
-      const existing = this.index!.find(item => item.id === id)
       if (!existing || existing.title !== title) {
-        const next = existing
-          ? this.index!.map(item => item.id === id ? { id, title } : item)
-          : [...this.index!, { id, title }]
         await this.store.write('leafer-board-index', next)
-        this.index = next
+        this.index = parseBoardSummaryIndex(next)!
       }
       return true as const
     })

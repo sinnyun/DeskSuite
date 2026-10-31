@@ -2,6 +2,7 @@ import type { Context, Plugin } from 'cordis'
 import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { z } from 'zod'
+import { errorMessage } from '../../services/error-text'
 
 const settingsKey = 'updater.settings'
 const settingsSchema = z.object({ feedUrl: z.string().max(2048).refine((value) => value === '' || /^https:\/\//i.test(value), '更新地址必须使用 HTTPS').default('') })
@@ -67,7 +68,7 @@ const updaterPlugin: Plugin = {
       try {
         await autoUpdater.checkForUpdates()
       } catch (error) {
-        publish({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+        publish({ status: 'error', message: errorMessage(error, '检查更新失败') })
         throw error
       }
       return state
@@ -78,7 +79,7 @@ const updaterPlugin: Plugin = {
     autoUpdater.on('update-not-available', () => publish({ status: 'unavailable', availableVersion: undefined, message: '当前已是最新版本' }))
     autoUpdater.on('download-progress', (progress) => publish({ status: 'downloading', percent: Math.round(progress.percent), message: `下载中 ${Math.round(progress.percent)}%` }))
     autoUpdater.on('update-downloaded', (info) => publish({ status: 'downloaded', availableVersion: info.version, percent: 100, message: `版本 ${info.version} 已下载，等待安装` }))
-    autoUpdater.on('error', (error) => publish({ status: 'error', message: error.message }))
+    autoUpdater.on('error', (error) => publish({ status: 'error', message: errorMessage(error, '更新失败') }))
 
     ctx.ipc.handle('updater', {
       get: () => state,
@@ -95,6 +96,12 @@ const updaterPlugin: Plugin = {
         autoUpdater.quitAndInstall(false, true)
         return true
       }
+    }, {
+      get: z.tuple([]),
+      setFeedUrl: z.tuple([z.string().max(2048)]),
+      check: z.tuple([]),
+      download: z.tuple([]),
+      install: z.tuple([])
     })
 
     if (settings.feedUrl) configureFeed(settings.feedUrl)

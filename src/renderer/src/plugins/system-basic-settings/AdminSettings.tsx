@@ -3,19 +3,23 @@ import type { ReactElement, ReactNode } from 'react'
 import { Copy, Lock, RefreshCw } from 'lucide-react'
 import {
   call,
+  callValidated,
+  errorText,
   getService,
   listServiceNames,
   log,
   useUiKit,
-  type McpAccess,
-  type McpToolInfo,
   type PluginCatalogEntry,
-  type PluginCatalogService,
-  type RuntimeInfo
+  type PluginCatalogService
 } from '../../workbench/sdk'
 import { StorageSettings } from './StorageSettings'
+import { mcpAccessSchema, mcpToolInfoSchema, runtimeInfoSchema } from './admin-schemas'
+import type { z } from 'zod'
 
 export type AdminSettingsSection = 'plugins' | 'runtime' | 'mcp' | 'storage'
+type McpAccess = z.infer<typeof mcpAccessSchema>
+type McpToolInfo = z.infer<typeof mcpToolInfoSchema>
+type RuntimeInfo = z.infer<typeof runtimeInfoSchema>
 
 const NOOP_SUBSCRIBE = (): (() => void) => () => {}
 const EMPTY_CATALOG: PluginCatalogEntry[] = []
@@ -46,11 +50,11 @@ export function AdminSettings({ section }: { section: AdminSettingsSection }): R
   const refresh = async (): Promise<void> => {
     setLoading(true)
     try {
-      const [runtimeInfo, currentAccess] = await Promise.all([call<RuntimeInfo>('runtime', 'info'), call<McpAccess>('mcp', 'getAccess')])
+      const [runtimeInfo, currentAccess] = await Promise.all([callValidated(runtimeInfoSchema, 'runtime', 'info'), callValidated(mcpAccessSchema, 'mcp', 'getAccess')])
       setInfo(runtimeInfo)
       setAccess(currentAccess)
     } catch (error) {
-      log('error', 'Settings', '读取运行环境信息失败', String(error))
+      log('error', 'Settings', '读取运行环境信息失败', errorText(error, '运行环境信息读取失败'))
     } finally {
       setLoading(false)
     }
@@ -60,12 +64,12 @@ export function AdminSettings({ section }: { section: AdminSettingsSection }): R
 
   const copyText = async (value: string, message: string): Promise<void> => {
     try { await call('clipboard', 'writeText', value); log('event', 'Settings', message) }
-    catch (error) { log('error', 'Settings', '复制失败', String(error)) }
+    catch (error) { log('error', 'Settings', '复制失败', errorText(error, '复制失败')) }
   }
   const togglePlugin = (plugin: PluginCatalogEntry): void => {
     if (!catalog) return
     try { catalog.setEnabled(plugin.id, !plugin.enabled) }
-    catch (error) { log('error', 'Settings', String(error)) }
+    catch (error) { log('error', 'Settings', '更改插件状态失败', errorText(error, '更改插件状态失败')) }
   }
   const mcpUrl = info ? `http://127.0.0.1:${info.mcpPort}/mcp` : '—'
 

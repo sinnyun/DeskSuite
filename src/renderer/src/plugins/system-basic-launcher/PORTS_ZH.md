@@ -21,4 +21,6 @@
 `launcher.groups()`、`launcher.createGroup(name)`、`launcher.renameGroup(id, name)`、`launcher.deleteGroup(id)`、
 `launcher.assignGroup(id, groupId?)`。面板支持用户分类、程序归类，以及按名称/路径/发布者搜索。
 
+写入面板状态前，插件使用本地 Zod schema 对 IPC 结果进行运行时校验：分页条目（最多 250 项）、分类（最多 100 项）、汇总计数和可空图片 data URL。无效响应会进入面板已有的错误提示流程；图标校验失败时退回默认图标。
+
 不消费 MCP 工具、事件或配置项。

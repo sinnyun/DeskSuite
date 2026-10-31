@@ -2,7 +2,8 @@ import { app, shell } from 'electron'
 import { readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import type { Context, Plugin } from 'cordis'
-import { mcpError, mcpText } from '../../services/mcp'
+import { z } from 'zod'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 import { isInside, normalize, samePath } from '../../services/paths'
 
 export type StorageKind = 'file' | 'directory'
@@ -301,6 +302,9 @@ const storagePlugin: Plugin = {
     ctx.ipc.handle('storage', {
       list: () => snapshot(),
       open: (target: string) => openLocation(target)
+    }, {
+      list: z.tuple([]),
+      open: z.tuple([z.string().min(1).max(32768)])
     })
     ctx.mcp.registerTool('plugin_storage', {
       description: '列出各插件在本机用户数据目录中的存储位置与占用大小（只读，不修改文件）',
@@ -308,7 +312,7 @@ const storagePlugin: Plugin = {
         try {
           return mcpText(JSON.stringify(await snapshot(), null, 2))
         } catch (error) {
-          return mcpError(error instanceof Error ? error.message : String(error))
+          return mcpErrorFrom(error)
         }
       }
     })

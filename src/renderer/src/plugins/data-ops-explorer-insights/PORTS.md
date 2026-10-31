@@ -31,6 +31,8 @@ Provides:
 - `basket` — `{ list(), add(items), remove(path), clear(), subscribe() }` returning `BasketItem[]`
   (SelectionItem + `addedAt`). Persisted by the main-process `basket` IPC service
   (`<userData>/data/basket.json`, max 200 items); the renderer keeps an optimistic cache only.
+  The cache uses a plugin-owned Zustand vanilla store and remains scoped to this renderer plugin.
+  Each IPC snapshot/result is decoded with a plugin-local Zod schema before entering the cache; malformed rows or more than 200 items are rejected.
 
 Consumes:
 
@@ -52,4 +54,4 @@ None. Basket data is owned by the main process.
 
 ## Logs
 
-Source `Insights` (lifecycle, clipboard actions, basket changes).
+Source `Insights` (lifecycle, clipboard actions, basket changes). Error payloads use the shared bounded error-text helper to scrub credentials and local paths.

@@ -1,6 +1,9 @@
 import type { PluginCatalogEntry, RendererPlugin, SlotContribution } from './types'
 import { registerServices } from './services'
 import { log } from './logs'
+import { useStore } from 'zustand'
+import { createStore } from 'zustand/vanilla'
+import { z } from 'zod'
 
 const modules = import.meta.glob<{ default: RendererPlugin }>('../plugins/*/index.tsx', {
   eager: true
@@ -45,12 +48,14 @@ function readDisabled(): Set<string> {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const parsed = saved ? (JSON.parse(saved) as unknown) : []
-    return new Set(
-      Array.isArray(parsed)
-        ? parsed.filter((id): id is string => typeof id === 'string' && !corePluginIds.has(id))
-        : []
-    )
-  } catch {
+    const result = z.array(z.string().max(128)).safeParse(parsed)
+    if (!result.success) {
+      console.warn('[workbench] Invalid disabled-plugin preference; enabling plugins by default', result.error.issues)
+      return new Set()
+    }
+    return new Set(result.data.filter((id) => pluginById.has(id) && !corePluginIds.has(id)))
+  } catch (error) {
+    console.warn('[workbench] Could not restore disabled-plugin preference', error)
     return new Set()
   }
 }
@@ -60,7 +65,6 @@ const enabled = new Set(
   rendererPlugins.filter((plugin) => !disabled.has(plugin.id)).map((plugin) => plugin.id)
 )
 
-const listeners = new Set<() => void>()
 const disposers = new Map<string, () => void>()
 let booted = false
 
@@ -78,11 +82,11 @@ function buildCatalog(): PluginCatalogEntry[] {
   }))
 }
 
-let catalogSnapshot = buildCatalog()
+interface RegistryState { catalog: PluginCatalogEntry[] }
+const registryStore = createStore<RegistryState>(() => ({ catalog: buildCatalog() }))
 
 function emit(): void {
-  catalogSnapshot = buildCatalog()
-  for (const listener of listeners) listener()
+  registryStore.setState({ catalog: buildCatalog() })
 }
 
 function persist(): void {
@@ -115,12 +119,9 @@ function deactivate(plugin: RendererPlugin): void {
 }
 
 export const pluginRegistry = {
-  list: (): PluginCatalogEntry[] => catalogSnapshot,
-  getSnapshot: (): PluginCatalogEntry[] => catalogSnapshot,
-  subscribe: (listener: () => void): (() => void) => {
-    listeners.add(listener)
-    return () => listeners.delete(listener)
-  },
+  list: (): PluginCatalogEntry[] => registryStore.getState().catalog,
+  getSnapshot: (): PluginCatalogEntry[] => registryStore.getState().catalog,
+  subscribe: (listener: () => void): (() => void) => registryStore.subscribe(listener),
   isEnabled: (id: string): boolean => enabled.has(id),
   setEnabled: (id: string, next: boolean): void => {
     const plugin = pluginById.get(id)
@@ -143,6 +144,10 @@ export const pluginRegistry = {
     emit()
     log('lifecycle', 'PluginLoader', `${next ? '启用' : '停用'}插件：${plugin.name}`, { pluginId: id })
   }
+}
+
+export function usePluginCatalog<T = PluginCatalogEntry[]>(selector: (catalog: PluginCatalogEntry[]) => T = (catalog) => catalog as unknown as T): T {
+  return useStore(registryStore, (state) => selector(state.catalog))
 }
 
 registerServices('workbench', {

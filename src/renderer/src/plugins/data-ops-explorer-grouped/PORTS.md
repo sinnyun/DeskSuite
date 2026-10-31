@@ -9,6 +9,8 @@ The component is an outer layout, independent of list/grid/gallery. Its contract
 
 Group modes: kind, modification minute, rating, folder. Groups preserve sorted entries; kind order is fixed and folder order starts with the current folder. Recursive aggregation is bounded to 500 directories / 25,000 entries. Group options are shared in renderer memory; grouping enabled state belongs to each pane and is persisted by explorer/session. Enabling or disabling grouping never changes the pane display mode.
 
+Group options use a plugin-owned Zustand vanilla store. The cross-plugin service returns a plain serializable `{ groupBy, includeChildren }` value and exposes only `configure()` for writes.
+
 Toolbar: independent group toggle alongside the three display buttons, combined group caption/select, current-folder / include-children scope. Chinese UI, 28px controls, light/dark surfaces.
 
 Optional `renderLayout(navigation): ReactElement` composes the grouped scroll area into a larger view without remounting the group component. Gallery uses it for the left single-column card rail and one global viewer on the right; `renderGroup` renders cards, never another gallery stage.

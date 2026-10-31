@@ -1,7 +1,7 @@
 import type { Context, Plugin } from 'cordis'
 import { sep } from 'node:path'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 import { normalize } from '../../services/paths'
 
 const searchSchema = z.object({
@@ -63,7 +63,9 @@ const plugin: Plugin = {
       )
       return { items, total, limit: args.limit, offset: args.offset }
     }
-    ctx.ipc.handle('search', { query: (args: unknown) => query(args) })
+    ctx.ipc.handle('search', { query: (args: unknown) => query(args) }, {
+      query: z.tuple([searchSchema])
+    })
     ctx.mcp.registerTool('search_files', {
       description: '在已扫描的文件索引中按名称/路径搜索，可按类型、标签、评分、收藏和根目录过滤；最多返回 200 条',
       inputSchema: {
@@ -71,7 +73,7 @@ const plugin: Plugin = {
         kind: z.string().max(32).optional(), tagId: z.number().int().positive().optional(), minRating: z.number().int().min(1).max(5).optional(),
         favorite: z.boolean().optional(), root: z.string().max(32768).optional()
       },
-      execute: async (args) => { try { return mcpText(JSON.stringify(query(args), null, 2)) } catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) } }
+      execute: async (args) => { try { return mcpText(JSON.stringify(query(args), null, 2)) } catch (error) { return mcpErrorFrom(error) } }
     })
   }
 }

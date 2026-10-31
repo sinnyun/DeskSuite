@@ -1,21 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { ArrowLeft, ArrowRight, ExternalLink, FolderOpen, Grid2X2, Image, LayoutGrid, Plus, RefreshCw, X } from 'lucide-react'
-import { call, useLayout, useUiKit } from '../../workbench/sdk'
+import { call, callValidated, errorText, useLayoutShallow, useUiKit } from '../../workbench/sdk'
 import { PageManager, type PageExport } from './PageManager'
 import { QuickCreate, type QuickTable } from './QuickCreate'
 import { BasicInformation, PresetInput, materialFields, type FieldPresets } from './BasicInformation'
-
-interface WorkCrateProject { id: string; name: string; createdAt: number; archived: boolean; mainImage: Preview | null }
-interface Preview { path: string; sha256: string; width: number; height: number }
-interface BoardInfo { materialCategory: string; material: string; size: string; sizeLabel: string; quantity: string; extra: Record<string, string> }
-interface WorkCrateBoard { id: string; projectId: string; index: number; title: string; widthPt: number; heightPt: number; info: BoardInfo }
-interface ProjectSnapshot { project: WorkCrateProject; documentPath: string | null }
-interface VectorCraftConfig { cliExecutable: string; guiExecutable: string; defaultImageFormat: 'png' | 'jpg'; port: number }
+import {
+  boardCatalogSchema,
+  boardPreviewSchema,
+  boardsChangedEventSchema,
+  createDocumentResultSchema,
+  documentPathSchema,
+  exportResultSchema,
+  fieldPresetsSchema,
+  openFolderResultSchema,
+  panelOpenEventSchema,
+  pickedDirectorySchema,
+  projectsChangedEventSchema,
+  projectSnapshotSchema,
+  quickCreateResultSchema,
+  vectorCraftConfigSchema,
+  workCrateBoardSchema,
+  workCrateProjectListSchema,
+  workCrateProjectSchema,
+  syncErrorEventSchema,
+  syncRecoveredEventSchema,
+  type BoardInfo,
+  type ProjectSnapshot,
+  type VectorCraftConfig,
+  type WorkCrateBoard,
+  type WorkCrateProject
+} from './schemas'
 
 export function WorkCratePanel(): ReactElement | null {
   const { ThemeFloatingPanel, DesktopButton, DesktopIconButton, DesktopCardButton, DesktopInput } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'workcrate'
   const [projects, setProjects] = useState<WorkCrateProject[]>([])
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null)
@@ -46,24 +65,24 @@ export function WorkCratePanel(): ReactElement | null {
 
   const loadProjects = useCallback(async (): Promise<void> => {
     try {
-      const list = await call<WorkCrateProject[]>('workcrateProjects', 'list', false)
+      const list = await callValidated(workCrateProjectListSchema, 'workcrateProjects', 'list', false)
       setProjects(list)
       const thumbs: Record<string, string> = {}
       const counts: Record<string, number> = {}
       const paths: Record<string, string | null> = {}
       await Promise.all(list.map(async (project) => {
         try {
-          const pages = await call<WorkCrateBoard[]>('workcrateBoards', 'boardCatalog', project.id)
+          const pages = await callValidated(boardCatalogSchema, 'workcrateBoards', 'boardCatalog', project.id)
           counts[project.id] = pages.length
           const first = pages[0]
-          if (first) thumbs[project.id] = await call<string>('workcrateBoards', 'preview', project.id, first.id)
+          if (first) thumbs[project.id] = await callValidated(boardPreviewSchema, 'workcrateBoards', 'preview', project.id, first.id)
         } catch { /* 新项目尚无预览时显示空状态 */ }
-        paths[project.id] = await call<string | null>('workcrateBoards', 'getDocumentPath', project.id).catch(() => null)
+        paths[project.id] = await callValidated(documentPathSchema, 'workcrateBoards', 'getDocumentPath', project.id).catch(() => null)
       }))
       setProjectPreviews(thumbs)
       setProjectCounts(counts)
       setProjectPaths(paths)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '无法读取工程列表') }
+    } catch (cause) { setError(errorText(cause, '无法读取工程列表')) }
   }, [])
 
   const loadProject = useCallback(async (projectId: string, boardId?: string): Promise<void> => {
@@ -71,18 +90,18 @@ export function WorkCratePanel(): ReactElement | null {
     setBusy(true); setError(''); setSyncError(''); setNotice('')
     try {
       const [project, catalog] = await Promise.all([
-        call<ProjectSnapshot>('workcrateProjects', 'get', projectId),
-        call<WorkCrateBoard[]>('workcrateBoards', 'boardCatalog', projectId)
+        callValidated(projectSnapshotSchema, 'workcrateProjects', 'get', projectId),
+        callValidated(boardCatalogSchema, 'workcrateBoards', 'boardCatalog', projectId)
       ])
       setSnapshot(project); setBoards(catalog); setActiveBoard(catalog.find((board) => board.id === boardId) ?? null); setPreview(''); setView(boardId ? 'page' : 'pages')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '无法读取工程画板') }
+    } catch (cause) { setError(errorText(cause, '无法读取工程画板')) }
     finally { setBusy(false) }
   }, [])
 
   useEffect(() => {
     if (!isOpen) return
     void loadProjects()
-    void call<VectorCraftConfig>('workcrateBoards', 'getConfig').then((value) => {
+    void callValidated(vectorCraftConfigSchema, 'workcrateBoards', 'getConfig').then((value) => {
       setConfig(value)
       setVectorCraftConfigured(Boolean(value.cliExecutable.trim()))
     }).catch(() => setVectorCraftConfigured(false))
@@ -90,54 +109,74 @@ export function WorkCratePanel(): ReactElement | null {
   const loadPresets = useCallback(async (): Promise<void> => {
     try {
       const [program, effective] = await Promise.all([
-        call<FieldPresets>('workcrateProjects', 'getProgramPresets'),
-        call<FieldPresets>('workcrateProjects', 'effectivePresets', selectedProject.current)
+        callValidated(fieldPresetsSchema, 'workcrateProjects', 'getProgramPresets'),
+        callValidated(fieldPresetsSchema, 'workcrateProjects', 'effectivePresets', selectedProject.current)
       ])
       setProgramPresets(program); setPresets(effective)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '无法读取基础信息') }
+    } catch (cause) { setError(errorText(cause, '无法读取基础信息')) }
   }, [])
   useEffect(() => { if (isOpen) void loadPresets() }, [isOpen, snapshot?.project.id, loadPresets])
   const savePresets = async (value: FieldPresets): Promise<void> => {
     setBusy(true); setError(''); setNotice('')
     try {
-      await call('workcrateProjects', 'saveProgramPresets', value)
+      await callValidated(fieldPresetsSchema, 'workcrateProjects', 'saveProgramPresets', value)
       await loadPresets(); setNotice('基础信息已保存，可在物料输入框旁选填')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '保存基础信息失败') }
+    } catch (cause) { setError(errorText(cause, '保存基础信息失败')) }
     finally { setBusy(false) }
   }
 
   const reloadCatalog = useCallback(async (projectId: string): Promise<void> => {
     const request = ++catalogRequest.current
     try {
-      const catalog = await call<WorkCrateBoard[]>('workcrateBoards', 'boardCatalog', projectId)
+      const catalog = await callValidated(boardCatalogSchema, 'workcrateBoards', 'boardCatalog', projectId)
       if (selectedProject.current !== projectId || request !== catalogRequest.current) return
       setBoards(catalog)
       setActiveBoard((current) => current ? catalog.find((board) => board.id === current.id) ?? catalog[0] ?? null : null)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '无法更新画板') }
+    } catch (cause) { setError(errorText(cause, '无法更新画板')) }
   }, [])
 
   useEffect(() => {
     if (!activeBoard) { setPreview(''); return }
     let alive = true
-    void call<string>('workcrateBoards', 'preview', activeBoard.projectId, activeBoard.id).then((value) => { if (alive) setPreview(value) }).catch((cause) => { if (alive) setError(String(cause)) })
+    void callValidated(boardPreviewSchema, 'workcrateBoards', 'preview', activeBoard.projectId, activeBoard.id).then((value) => { if (alive) setPreview(value) }).catch((cause) => { if (alive) setError(errorText(cause, '画板预览数据无效')) })
     return () => { alive = false }
   }, [activeBoard])
 
   useEffect(() => window.bridge.onEvent((channel, payload) => {
-    const event = payload as { projectId?: string; boardId?: string; message?: string; section?: 'connection' | 'basic'; quickCreate?: boolean; table?: QuickTable | null } | undefined
-    const projectId = event?.projectId
     if (channel === 'workcrate:panel-open') {
+      const parsed = panelOpenEventSchema.safeParse(payload)
+      if (!parsed.success) { setError('收到无效的工程面板请求，已忽略'); return }
+      const event = parsed.data
+      const projectId = event.projectId
       if (event?.section) { setView('settings'); setSettingsTab(event.section) }
       else if (projectId) void loadProject(projectId, event?.boardId).then(() => { if (event?.quickCreate) { setQuickTable(event.table ?? null); setView('quick') } })
       else { setView('projects'); setSnapshot(null); setActiveBoard(null) }
+      return
     }
-    if (channel === 'workcrate:boards-changed' && projectId) {
+    if (channel === 'workcrate:boards-changed') {
+      const parsed = boardsChangedEventSchema.safeParse(payload)
+      if (!parsed.success) { setError('收到无效的画板更新通知，已忽略'); return }
+      const { projectId } = parsed.data
       void loadProjects()
       if (projectId === selectedProject.current) { setSyncError(''); void reloadCatalog(projectId) }
+      return
     }
-    if (channel === 'workcrate:sync-error' && projectId === selectedProject.current) setSyncError(event?.message ?? '自动同步失败')
-    if (channel === 'workcrate:sync-recovered' && projectId === selectedProject.current) setSyncError('')
-    if (channel === 'workcrateProjects:changed') { void loadProjects(); void loadPresets() }
+    if (channel === 'workcrate:sync-error') {
+      const parsed = syncErrorEventSchema.safeParse(payload)
+      if (!parsed.success) { setError('收到无效的同步错误通知，已忽略'); return }
+      if (parsed.data.projectId === selectedProject.current) setSyncError(errorText(parsed.data.message, 'VectorCraft 自动同步失败'))
+      return
+    }
+    if (channel === 'workcrate:sync-recovered') {
+      const parsed = syncRecoveredEventSchema.safeParse(payload)
+      if (!parsed.success) { setError('收到无效的同步恢复通知，已忽略'); return }
+      if (parsed.data.projectId === selectedProject.current) setSyncError('')
+      return
+    }
+    if (channel === 'workcrateProjects:changed') {
+      if (!projectsChangedEventSchema.safeParse(payload).success) { setError('收到无效的工程数据更新通知，已忽略'); return }
+      void loadProjects(); void loadPresets()
+    }
   }), [loadProject, loadProjects, reloadCatalog, loadPresets])
 
   const createProject = async (): Promise<void> => {
@@ -145,21 +184,21 @@ export function WorkCratePanel(): ReactElement | null {
     setBusy(true); setError(''); setNotice('')
     let created: WorkCrateProject | null = null
     try {
-      const connection = await call<VectorCraftConfig>('workcrateBoards', 'getConfig')
+      const connection = await callValidated(vectorCraftConfigSchema, 'workcrateBoards', 'getConfig')
       setConfig(connection)
       setVectorCraftConfigured(Boolean(connection.cliExecutable.trim()))
       if (!connection.cliExecutable.trim()) throw new Error('请先在“程序默认信息”中配置 VectorCraft CLI 可执行文件')
-      const directory = await call<string | null>('filesystem', 'pickDirectory')
+      const directory = await callValidated(pickedDirectorySchema, 'filesystem', 'pickDirectory')
       if (!directory) return
-      created = await call<WorkCrateProject>('workcrateProjects', 'create', name.trim())
-      await call('workcrateBoards', 'createProjectDocument', { projectId: created.id, directory })
-      await call('workcrateProjects', 'relocateProject', { projectId: created.id, directory })
+      created = await callValidated(workCrateProjectSchema, 'workcrateProjects', 'create', name.trim())
+      await callValidated(createDocumentResultSchema, 'workcrateBoards', 'createProjectDocument', { projectId: created.id, directory })
+      await callValidated(documentPathSchema, 'workcrateProjects', 'relocateProject', { projectId: created.id, directory })
       setName(''); setNotice(`已在所选文件夹创建「${created.name}」及 VectorCraft 原生文档`)
       await loadProjects(); await loadProject(created.id)
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : '创建 VectorCraft 工程失败'
+      const message = errorText(cause, '创建 VectorCraft 工程失败')
       if (created) {
-        const path = await call<string | null>('workcrateProjects', 'getDocumentPath', created.id).catch(() => null)
+        const path = await callValidated(documentPathSchema, 'workcrateProjects', 'getDocumentPath', created.id).catch(() => null)
         if (!path) await call('workcrateProjects', 'delete', created.id).catch(() => undefined)
         else setNotice(`VectorCraft 文档已创建：${path}。项目资料位置更新失败，可稍后重新打开工程。`)
       }
@@ -175,16 +214,16 @@ export function WorkCratePanel(): ReactElement | null {
     if (!snapshot || busy) return
     setBusy(true); setError(''); setNotice('')
     try {
-      const next = await call<WorkCrateBoard[]>('workcrateBoards', 'refresh', snapshot.project.id)
+      const next = await callValidated(boardCatalogSchema, 'workcrateBoards', 'refresh', snapshot.project.id)
       setBoards(next)
       if (activeBoard) {
         const updated = next.find((item) => item.id === activeBoard.id) ?? next[0] ?? null
         setActiveBoard(updated)
-        setPreview(updated ? await call<string>('workcrateBoards', 'preview', snapshot.project.id, updated.id) : '')
+        setPreview(updated ? await callValidated(boardPreviewSchema, 'workcrateBoards', 'preview', snapshot.project.id, updated.id) : '')
       }
       setNotice(`已从 VectorCraft 同步 ${next.length} 个画板及物料栏信息`)
       await loadProjects()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '同步 VectorCraft 画板失败') }
+    } catch (cause) { setError(errorText(cause, '同步 VectorCraft 画板失败')) }
     finally { setBusy(false) }
   }
 
@@ -192,29 +231,29 @@ export function WorkCratePanel(): ReactElement | null {
     if (!snapshot || busy) return
     setBusy(true); setError(''); setNotice('')
     try { await call('workcrateBoards', 'openInVectorCraft', snapshot.project.id); setNotice('已在 VectorCraft 中打开工程，画板与物料栏将自动双向同步') }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '无法打开 VectorCraft') }
+    catch (cause) { setError(errorText(cause, '无法打开 VectorCraft')) }
     finally { setBusy(false) }
   }
 
   const openSettings = async (): Promise<void> => {
     setView('settings'); setError('')
     try {
-      const value = await call<VectorCraftConfig>('workcrateBoards', 'getConfig')
+      const value = await callValidated(vectorCraftConfigSchema, 'workcrateBoards', 'getConfig')
       setConfig(value)
       setVectorCraftConfigured(Boolean(value.cliExecutable.trim()))
     }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '无法读取 VectorCraft 设置') }
+    catch (cause) { setError(errorText(cause, '无法读取 VectorCraft 设置')) }
   }
 
   const saveSettings = async (): Promise<void> => {
     setBusy(true); setError(''); setNotice('')
     try {
-      const value = await call<VectorCraftConfig>('workcrateBoards', 'setConfig', config)
+      const value = await callValidated(vectorCraftConfigSchema, 'workcrateBoards', 'setConfig', config)
       setConfig(value)
       setVectorCraftConfigured(Boolean(value.cliExecutable.trim()))
       setNotice('VectorCraft 连接设置已保存')
     }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '保存 VectorCraft 设置失败') }
+    catch (cause) { setError(errorText(cause, '保存 VectorCraft 设置失败')) }
     finally { setBusy(false) }
   }
 
@@ -222,10 +261,10 @@ export function WorkCratePanel(): ReactElement | null {
     if (!snapshot || busy) return
     setBusy(true); setError('')
     try {
-      const board = await call<WorkCrateBoard>('workcrateBoards', 'createPage', snapshot.project.id)
+      const board = await callValidated(workCrateBoardSchema, 'workcrateBoards', 'createPage', snapshot.project.id)
       await reloadCatalog(snapshot.project.id); await openPage(board)
       setNotice('已在 VectorCraft 文档中新增画板')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '新增 VectorCraft 画板失败') }
+    } catch (cause) { setError(errorText(cause, '新增 VectorCraft 画板失败')) }
     finally { setBusy(false) }
   }
 
@@ -233,11 +272,11 @@ export function WorkCratePanel(): ReactElement | null {
     if (!snapshot || busy) return
     setBusy(true); setError(''); setNotice('')
     try {
-      const result = await call<{ count: number; reusedInitial: boolean; boards: WorkCrateBoard[] }>('workcrateBoards', 'quickCreate', { projectId: snapshot.project.id, table, reuseInitial })
+      const result = await callValidated(quickCreateResultSchema, 'workcrateBoards', 'quickCreate', { projectId: snapshot.project.id, table, reuseInitial })
       setBoards(result.boards); setView('pages'); setQuickTable(null)
       setNotice(`已创建 ${result.count} 张画布及相应物料${result.reusedInitial ? '，已复用空白初始画板' : ''}`)
       await loadProjects()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '批量创建失败') }
+    } catch (cause) { setError(errorText(cause, '批量创建失败')) }
     finally { setBusy(false) }
   }
 
@@ -250,10 +289,10 @@ export function WorkCratePanel(): ReactElement | null {
     ids.splice(to, 0, ids.splice(from, 1)[0])
     setBusy(true); setError('')
     try {
-      await call('workcrateBoards', 'reorderPages', { projectId: snapshot.project.id, boardIds: ids })
+      await callValidated(boardCatalogSchema, 'workcrateBoards', 'reorderPages', { projectId: snapshot.project.id, boardIds: ids })
       await reloadCatalog(snapshot.project.id)
       setNotice('页面顺序已保存到 VectorCraft 文档')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '调整页面顺序失败') }
+    } catch (cause) { setError(errorText(cause, '调整页面顺序失败')) }
     finally { setBusy(false) }
   }
 
@@ -261,12 +300,12 @@ export function WorkCratePanel(): ReactElement | null {
     if (!activeBoard || busy) return
     setBusy(true); setError(''); setNotice('')
     try {
-      const updated = await call<WorkCrateBoard>('workcrateBoards', 'updateInfo', { boardId: activeBoard.id, info })
+      const updated = await callValidated(workCrateBoardSchema, 'workcrateBoards', 'updateInfo', { boardId: activeBoard.id, info })
       setActiveBoard(updated)
       setBoards((current) => current.map((board) => board.id === updated.id ? updated : board))
-      setPreview(await call<string>('workcrateBoards', 'preview', updated.projectId, updated.id))
+      setPreview(await callValidated(boardPreviewSchema, 'workcrateBoards', 'preview', updated.projectId, updated.id))
       setNotice('物料栏已通过 VectorCraft CLI 写入原生画布')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '写入 VectorCraft 物料栏失败') }
+    } catch (cause) { setError(errorText(cause, '写入 VectorCraft 物料栏失败')) }
     finally { setBusy(false) }
   }
 
@@ -274,18 +313,18 @@ export function WorkCratePanel(): ReactElement | null {
     if (!snapshot || busy) return
     setBusy(true); setError(''); setNotice('')
     try {
-      const directory = await call<string | null>('filesystem', 'pickDirectory')
+      const directory = await callValidated(pickedDirectorySchema, 'filesystem', 'pickDirectory')
       if (!directory) return
-      const result = await call<{ directory: string; files: string[]; warnings: string[] }>('workcrateBoards', 'exportBoards', { projectId: snapshot.project.id, directory, ...options })
+      const result = await callValidated(exportResultSchema, 'workcrateBoards', 'exportBoards', { projectId: snapshot.project.id, directory, ...options })
       setNotice(`已导出 ${result.files.length} 个文件至 ${result.directory}${result.warnings.length ? `；${result.warnings.join('；')}` : ''}`)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '导出页面失败') }
+    } catch (cause) { setError(errorText(cause, '导出页面失败')) }
     finally { setBusy(false) }
   }
 
   const openFolder = async (): Promise<void> => {
     if (!snapshot?.documentPath) return
-    try { await call('workcrateBoards', 'openProjectFolder', snapshot.project.id) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '无法打开工程文件夹') }
+    try { await callValidated(openFolderResultSchema, 'workcrateBoards', 'openProjectFolder', snapshot.project.id) }
+    catch (cause) { setError(errorText(cause, '无法打开工程文件夹')) }
   }
 
   if (!isOpen) return null
@@ -333,7 +372,7 @@ function NavButton({ active, disabled, onClick, icon, children }: { active: bool
 function PageThumb({ board, active, onClick }: { board: WorkCrateBoard; active: boolean; onClick: () => void }): ReactElement {
   const { DesktopCardButton } = useUiKit()
   const [thumb, setThumb] = useState('')
-  useEffect(() => { let alive = true; void call<string>('workcrateBoards', 'preview', board.projectId, board.id).then((image) => { if (alive) setThumb(image) }).catch(() => undefined); return () => { alive = false } }, [board])
+  useEffect(() => { let alive = true; void callValidated(boardPreviewSchema, 'workcrateBoards', 'preview', board.projectId, board.id).then((image) => { if (alive) setThumb(image) }).catch(() => undefined); return () => { alive = false } }, [board])
   return <DesktopCardButton type="button" selected={active} onClick={onClick} className="w-full p-2"><div className="flex h-24 items-center justify-center">{thumb && <img src={thumb} alt="" draggable={false} className="h-full w-full object-contain"/>}</div><div className="mt-1 truncate text-xs text-[var(--ds-text-primary)]">{String(board.index + 1).padStart(2, '0')} {board.title || '未命名画板'}</div></DesktopCardButton>
 }
 

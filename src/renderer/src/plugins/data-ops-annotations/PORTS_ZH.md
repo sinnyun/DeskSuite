@@ -8,6 +8,7 @@
 - 主进程依赖：IPC 服务 `annotations`、事件 `annotations:changed`。
 - 槽位贡献：`sidebar.left.tabs` 与 `sidebar.left.content`，两者贡献 id 均为 `annotations`。
 - 渲染服务：`annotations`；提供缓存快照、订阅、兼容方法 `get`、`toggleFavorite`、`setRating`、`addTag`、`removeTag`、`allTags`、`exportFor`，以及 `prime`、`forPaths`、`tree`、`setNote`、`importLegacy`。
-- 数据：通过 `window.bridge.invoke` 读取并缓存元数据；收到 `annotations:changed` 后刷新；写入先乐观更新再调用 IPC。
+- 元数据由标注插件自己的 Zustand vanilla store 持有。`subscribePath(path, listener)` 只在该路径元数据引用变化时通知；`getSnapshot()` 保留全路径兼容快照。
+- 数据：`forPaths`、`tree`、`counts`、标签创建和旧数据导入结果在进入缓存或页面状态前经渲染插件本地 Zod schema 解码；`annotations:changed` payload 校验后才触发刷新；写入仍先乐观更新再调用 IPC。
 - 配置 / localStorage：无。
 - 标签页支持中文的标签创建、重命名、合并、删除和批量分配。

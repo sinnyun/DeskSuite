@@ -32,7 +32,7 @@ WorkCrate's adapter for the official VectorCraft CLI. WorkCrate owns project mat
 - `workcrate_panel_open()` opens the WorkCrate floating panel in DeskSuite through a renderer event.
 - `workcrate_vectorcraft_config_get()` reads the VectorCraft executable and control-port settings.
 - `workcrate_vectorcraft_config_set({ config, confirm: true })` validates executable paths and updates the VectorCraft settings. Requires full MCP access and explicit confirmation.
-- `workcrate_project_create({ name, directory, confirm: true })` creates a WorkCrate project, its native `.vectorcraft` document, an initial board, and the initial material bar. `directory` must be under a configured `mcp.writeRoots` path. Returns the project, document path, initial board catalogue, project-data path, and any portable-relocation warning.
+- `workcrate_project_create({ name, directory, confirm: true })` creates a WorkCrate project, its native `.vectorcraft` document, an initial board, and the initial material bar. `directory` must be under a configured `mcp.writeRoots` path. Returns the project, document path, initial board catalogue, project-data path, and any portable-relocation warning; warning text is bounded and scrubbed by the shared main-process error formatter before leaving the provider.
 - `workcrate_document_create({ projectId, directory, confirm: true })` creates and associates a native document for an existing project. Requires full MCP access and a configured writable root.
 - `workcrate_board_catalog({ projectId })` reads the cached board catalogue.
 - `workcrate_boards_refresh({ projectId })` explicitly updates the catalogue and preview cache from the saved native document.
@@ -45,7 +45,7 @@ MCP mutations follow the shared path policy and require the configured access le
 
 - The Projects service owns project metadata and project-data locations.
 - This plugin stores `boards-cache.json` and `native-previews/` in the project data directory. Cache records bind to the current native document association.
-- CLI sessions are hidden, bounded headless processes with explicit document read/write roots and project-scoped CLI configuration.
+- CLI sessions are hidden, bounded headless processes with explicit document read/write roots and project-scoped CLI configuration. Each UTF-8 JSON-RPC line in either direction is limited to 64 MiB, requests time out after 65 seconds, replies require a JSON-RPC 2.0 success/error envelope, and valid server notifications are ignored. MCP tool results require a bounded content array (at most 100 entries); text is decoded as JSON before use and error text is truncated to 2 KiB. The production decoder is independently exercised by `scripts/verify/workcrate-sidecar-protocol.mjs`; this does not validate compatibility with a live VectorCraft build.
 - A WorkCrate material-bar save writes the native VectorCraft objects and structured metadata, saves the native document, then refreshes the board cache.
 - Ordinary VectorCraft editing stays in VectorCraft. WorkCrate sync reads the saved canvas and refreshes cached board previews; it does not provide canvas editing; page export delegates to the native export commands.
 
@@ -59,7 +59,7 @@ MCP mutations follow the shared path policy and require the configured access le
 - `reorderPages({ projectId, boardIds })` (IPC) and `workcrate_boards_reorder({ projectId, boardIds, confirm: true })` (MCP) validate the complete current board list, write native artboard order and page-number headers, save, and refresh previews.
 - `workcrate_document_open({ projectId, confirm: true })` opens the desktop editor with its control server and document-scoped automation roots (or connects to the existing server). The optional GUI executable defaults to the executable beside the configured CLI.
 - `workcrate_panel_open({ projectId?, boardId? })` opens the project repository, page manager, or specified page editor.
-- Saved-file stamps and live desktop revisions are checked every 1.5 seconds, serially per project. Errors emit `workcrate:sync-error` with `{ projectId, message }` and are retried.
+- Saved-file stamps and live desktop revisions are checked every 1.5 seconds, serially per project. Errors emit `workcrate:sync-error` with `{ projectId, message }` and are retried; the message is bounded and scrubbed by the shared main-process error formatter before broadcast.
 - Reads and edits use the matching active desktop document, including unsaved edits. WorkCrate edits save that live document. Mutations reject a different active document; switch to the project in VectorCraft first. A desktop launched externally must enable `--control <configured port>` for live synchronization; without control, saved-file sync remains available.
 
 `workcrate_panel_open` also accepts optional `section: connection | basic` to open the corresponding program-default settings tab.

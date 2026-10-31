@@ -30,6 +30,8 @@
 - `basket` —— `{ list(), add(items), remove(path), clear(), subscribe() }`，返回 `BasketItem[]`
   （SelectionItem + `addedAt`）。持久化在主进程 `basket` IPC 服务（`<userData>/data/basket.json`，最多 200 项），
   渲染层只是乐观缓存。
+- 缓存由插件自有 Zustand vanilla store 持有；收到主进程 `basket:changed` 后重新读取持久化快照。
+- 每次读取或写入 `basket` IPC 快照/结果后，先通过插件本地 Zod schema 解码，再进入 Zustand 缓存；畸形条目或超过 200 条的响应会被拒绝。
 
 消费：
 
@@ -51,4 +53,4 @@
 
 ## 日志
 
-来源 `Insights`（生命周期、剪贴板操作、暂存篮变更）。
+来源 `Insights`（生命周期、剪贴板操作、暂存篮变更）。错误载荷使用共享限长错误文本 helper，遮蔽凭据和本机路径。

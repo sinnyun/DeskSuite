@@ -24,7 +24,7 @@ import {
 import {
   explorerStore,
   hasActiveFilters,
-  useExplorer,
+  useExplorerShallow,
   type ExplorerViewMode,
   type KindFilter,
   type SortField
@@ -74,7 +74,11 @@ const RATING_OPTIONS = [
 
 export function ExplorerToolbar(): ReactElement {
   const { DesktopIconButton, DesktopInput, DesktopSelect } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    tagFilter: s.tagFilter, canBack: s.canBack, canForward: s.canForward, parent: s.parent,
+    status: s.status, search: s.search, kindFilter: s.kindFilter, minRating: s.minRating,
+    favoriteOnly: s.favoriteOnly, sortField: s.sortField, sortOrder: s.sortOrder, viewMode: s.viewMode
+  }))
   const basketAvailable = getService<BasketService>('basket') !== undefined
   const GroupedToolbar = getService<GroupedToolbarService>('explorerGroupedView')?.toolbarComponent
   const knownTags = metadataStore.allTags()

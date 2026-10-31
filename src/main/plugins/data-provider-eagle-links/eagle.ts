@@ -2,6 +2,7 @@ import { realpath, readdir, stat } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { errorMessage, MAX_ERROR_TEXT } from '../../services/error-text'
 
 export const itemId = z.string().regex(/^[a-zA-Z0-9]{1,100}$/)
 export const sourceSchema = z.object({
@@ -14,6 +15,11 @@ export const sourceSchema = z.object({
 })
 export type EagleSource = z.infer<typeof sourceSchema>
 const api = 'http://127.0.0.1:41595'
+const API_ERROR_PREFIX = 'Eagle 查询失败，请确认 Eagle 已运行且启用本机 API：'
+function eagleError(error: unknown): Error {
+  return new Error(`${API_ERROR_PREFIX}${errorMessage(error, '未知错误').slice(0, MAX_ERROR_TEXT - API_ERROR_PREFIX.length)}`)
+}
+
 const itemSchema = z.object({
   id: itemId, name: z.string().max(1000), ext: z.string().regex(/^[a-zA-Z0-9]{1,24}$/),
   size: z.number().int().nonnegative(), folders: z.array(z.string()).nullish(), tags: z.array(z.string()).nullish(),
@@ -51,10 +57,12 @@ export class EagleClient {
           chunks.push(value)
         }
       } finally { await reader.cancel().catch(() => {}) }
-      const envelope = z.object({ status: z.string(), data: z.unknown(), message: z.string().optional() }).parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      const envelope = z.object({ status: z.string(), data: z.unknown(), message: z.string().max(MAX_ERROR_TEXT).optional() }).parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
       if (envelope.status !== 'success') throw new Error(envelope.message ?? '查询失败')
       return envelope.data
-    } catch (error) { throw new Error(`Eagle 查询失败，请确认 Eagle 已运行且启用本机 API：${String(error)}`) }
+    } catch (error) {
+      throw eagleError(error)
+    }
   }
   async resolve(id: string): Promise<Omit<EagleSource, 'resourceUri'>> {
     itemId.parse(id)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { FolderOpen, Link2, RefreshCw, Trash2 } from 'lucide-react'
-import { call, getService, useLayout, useUiKit } from '../../workbench/sdk'
+import { call, errorText, getService, useLayoutShallow, useUiKit } from '../../workbench/sdk'
 
 // Public service contract is structural: no imports from the providing plugin.
 interface ResourceInfo {
@@ -23,14 +23,14 @@ interface Action {
 
 export function ResourceActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { activeFloatingPanel, toggleFloatingPanel } = useLayout()
+  const { activeFloatingPanel, toggleFloatingPanel } = useLayoutShallow((state) => ({ activeFloatingPanel: state.activeFloatingPanel, toggleFloatingPanel: state.toggleFloatingPanel }))
   return <ActivityButton icon={<Link2 className="h-4 w-4" />} label="资源" active={activeFloatingPanel === 'resources'} onClick={() => toggleFloatingPanel('resources')} />
 }
 
 export function ResourcePanel(): ReactElement | null {
   const client = getService<ResourceClient>('resources')
   const { ThemeFloatingPanel, DesktopButton, DesktopInput, DesktopCardButton } = useUiKit()
-  const { activeFloatingPanel, floatingPanelOpen, openFloatingPanel, closeFloatingPanel } = useLayout()
+  const { activeFloatingPanel, floatingPanelOpen, openFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ activeFloatingPanel: state.activeFloatingPanel, floatingPanelOpen: state.floatingPanelOpen, openFloatingPanel: state.openFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'resources'
   const [items, setItems] = useState<ResourceInfo[]>([])
   const [selected, setSelected] = useState<ResourceInfo | null>(null)
@@ -59,19 +59,19 @@ export function ResourcePanel(): ReactElement | null {
       try {
         const value = await client.readText(resource.url)
         if (version === generation.current) setText(value.text)
-      } catch (cause) { if (version === generation.current) setError(String(cause)) }
+      } catch (cause) { if (version === generation.current) setError(errorText(cause, '资源文本预览失败')) }
     }
     return resource
   }, [client, openFloatingPanel])
 
-  const run = (task: Promise<unknown>): void => { void task.catch((cause) => setError(String(cause))) }
-  useEffect(() => { if (isOpen) void refresh().catch((cause) => setError(String(cause))) }, [isOpen, refresh])
+  const run = (task: Promise<unknown>): void => { void task.catch((cause) => setError(errorText(cause, '资源操作失败'))) }
+  useEffect(() => { if (isOpen) void refresh().catch((cause) => setError(errorText(cause, '资源列表读取失败'))) }, [isOpen, refresh])
   useEffect(() => {
     if (!isOpen) media.current?.pause()
   }, [isOpen])
 
   useEffect(() => window.bridge.onEvent((channel, payload) => {
-    if (channel === 'resources:changed') { void refresh().catch((cause) => setError(String(cause))); return }
+    if (channel === 'resources:changed') { void refresh().catch((cause) => setError(errorText(cause, '资源列表刷新失败'))); return }
     if (channel !== 'resources:action') return
     const args = payload as Action
     void (async () => {
@@ -136,7 +136,7 @@ export function ResourcePanel(): ReactElement | null {
         }
         await call('resources', 'complete', args.requestId, { value })
       } catch (cause) {
-        await call('resources', 'complete', args.requestId, { error: String(cause) })
+        await call('resources', 'complete', args.requestId, { error: errorText(cause, '资源操作失败') })
       }
     })()
   }), [client, openFloatingPanel, preview, refresh])
@@ -204,7 +204,7 @@ function LeaferPreview({ resource, client, onState }: { resource: ResourceInfo; 
         engine = leafer
         leafer.add(new Image({ url: lease.url, x: (width - lease.width * scale) / 2, y: (height - lease.height * scale) / 2, width: lease.width * scale, height: lease.height * scale }))
         stateCallback.current({ ready: true, width: lease.width, height: lease.height })
-      } catch (cause) { if (!disposed) stateCallback.current({ ready: false, error: String(cause) }) }
+      } catch (cause) { if (!disposed) stateCallback.current({ ready: false, error: errorText(cause, '图片资源预览失败') }) }
     })()
     return () => {
       disposed = true

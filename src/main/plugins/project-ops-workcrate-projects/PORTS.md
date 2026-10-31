@@ -75,7 +75,7 @@ The renderer must use `readPreview`; it cannot read files under `userData`. Succ
 
 - Recent-project index: `<userData>/data/workcrate/recent.json`, registered with the main-process `store` service and its atomic/versioned envelope.
 - New project data starts at `<userData>/data/workcrate/projects/<uuid>/`. After a native document is explicitly created or associated, the caller may relocate the owned dataset to `<chosen folder>/.workcrate/<uuid>/`; the index records its absolute location.
-- Project data is a versioned `project.json`; previews are stored under `previews/` with SHA-256 and dimensions. JSON writes use a same-directory temporary file and backup rollback. Relocation copies into a temporary sibling directory, validates identity, atomically publishes, updates the locator and only then removes the old owned copy.
+- Project data is a versioned `project.json`; reads and writes are limited to 16 MiB and the parsed document is schema-validated. Previews are stored under `previews/` with SHA-256 and dimensions. JSON writes use a same-directory temporary file and backup rollback. Relocation copies into a temporary sibling directory, validates identity, atomically publishes, updates the locator and only then removes the old owned copy.
 - Duplicate, relocation, portable-folder reopening and deletion verify the copied project document and every registered preview digest before publishing/retiring data. Recursive copies reject symlinks and junctions rather than silently omitting project-owned entries.
 - `openProjectFolder` validates the complete candidate directory and IDs before updating the recent index. It does not scan arbitrary disks.
 - Project deletion copies plugin-owned metadata and previews into `<userData>/data/workcrate/trash/` before removing the registered project data. Referenced source files and associated native documents are never deleted or moved by this plugin.
@@ -98,11 +98,13 @@ The renderer must use `readPreview`; it cannot read files under `userData`. Succ
 
 All mutating tools also obey the configured MCP access gate (`standard` or `full`; high impact requires `full`). `confirm: true` is an additional per-call requirement. Source files and associated native documents are never written by reference, preview, association, delete, or relocation tools; relocation only moves WorkCrate-owned project data.
 
+MCP handler errors use the shared main-process formatter, which bounds the text and scrubs local paths and credentials while preserving the standard MCP error result shape.
+
 The Boards plugin owns native document/board data and any official VectorCraft CLI calls; Projects only records the explicit document association and binding UUID.
 
 ## Material basic information
 
-The `workcrateProjects` IPC exposes `getProgramPresets()`, `saveProgramPresets(presets)`, and `effectivePresets(projectId?)`. MCP exposes `workcrate_program_presets_get()` and `workcrate_program_presets_save({ presets, confirm: true })`; saves require mutation access and replace the complete list after validation/normalization, then emit `workcrateProjects:changed`.
+The `workcrateProjects` IPC exposes `list(includeArchived?)`, `getProgramPresets()`, `saveProgramPresets(presets)`, and `effectivePresets(projectId?)`; an absent or null project ID selects program defaults. MCP exposes `workcrate_program_presets_get()` and `workcrate_program_presets_save({ presets, confirm: true })`; saves require mutation access and replace the complete list after validation/normalization, then emit `workcrateProjects:changed`.
 
 On first initialization of material defaults, `materialDefaultsVersion` in recent.json advances to 1. Nine missing fields are seeded with 83 suggestions: materialCategory, material, sizeLabel, size, quantity, stock, craft, color, installation. Existing field keys/values are preserved. Later user deletions and empty option lists are not reseeded, including after restart. No project material value is automatically overwritten by suggestions.
 

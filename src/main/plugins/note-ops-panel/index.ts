@@ -35,6 +35,7 @@ const draftSchema = z.object({
     updatedAt: z.number().int().nonnegative()
   })).max(MAX_DRAFTS)
 })
+const draftInputSchema = z.object({ path: z.string().min(1).max(1000), markdown: z.string().max(MAX_DRAFT_LENGTH) })
 type DraftDocument = z.infer<typeof draftSchema>
 
 function assertTextOnly(markdown: string): void {
@@ -103,7 +104,7 @@ export default {
         return doc.entries.find((entry) => identity(entry.path) === key) ?? null
       },
       saveDraft: async (input: unknown) => {
-        const parsed = z.object({ path: z.string().min(1).max(1000), markdown: z.string().max(MAX_DRAFT_LENGTH) }).parse(input)
+        const parsed = draftInputSchema.parse(input)
         assertTextOnly(parsed.markdown)
         const key = identity(parsed.path)
         const updatedAt = Date.now()
@@ -123,6 +124,15 @@ export default {
         return true
       },
       listDrafts: async () => ctx.store.read<DraftDocument>('note-panel-drafts')
+    }, {
+      pickDirectory: z.tuple([]),
+      complete: z.tuple([z.string().uuid(), z.object({ error: z.string().max(2048).optional(), value: z.unknown().optional() }).strict()]),
+      loadPreferences: z.tuple([]),
+      rememberPreferences: z.tuple([preferencesSchema]),
+      loadDraft: z.tuple([z.string().min(1).max(1000)]),
+      saveDraft: z.tuple([draftInputSchema]),
+      clearDraft: z.tuple([z.string().min(1).max(1000)]),
+      listDrafts: z.tuple([])
     })
     const ask = async (
       action: string,

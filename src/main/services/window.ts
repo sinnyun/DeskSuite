@@ -90,6 +90,7 @@ export class WindowService extends Service {
   }
 
   private persistWindowState(win = this.getMainWindow()): Promise<void> {
+    if (!this.ctx.config.canPersistWindowState()) return Promise.resolve()
     if (!win || win.isDestroyed()) return Promise.resolve()
     if (this.saveTimer !== null) { clearTimeout(this.saveTimer); this.saveTimer = null }
     const bounds = win.getNormalBounds()

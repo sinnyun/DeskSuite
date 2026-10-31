@@ -28,8 +28,9 @@ Service: `watch`
 
 ## Events broadcast
 
-- `fs:changed` — `{ paths: string[], dirs: string[], invalidate: boolean }`. Events are debounced by the `watch.debounceMs` setting (100–5000 ms, default 500); at most 200 changed paths are listed per directory, after which `invalidate` is true and `paths` is empty.
-- `fs:watch:error` — `{ message: string }` when the underlying watcher reports an error.
+- `fs:changed` — validated watcher payload `{ paths: string[], dirs: [string], invalidate: boolean }`. `paths` contains at most 200 absolute paths; when capped, `invalidate` is true and `paths` is empty. Events are debounced by `watch.debounceMs` (100–5000 ms, default 500).
+- `fs:watch:error` — validated `{ message: string }` when the underlying watcher reports an error; error text is bounded and sanitized before broadcast.
+- Watcher return values (`setPaneDirectories`, `clearPane`, `getDirectories`) are decoded as at most 16 absolute directory strings before returning.
 
 ## Dependencies and behavior
 

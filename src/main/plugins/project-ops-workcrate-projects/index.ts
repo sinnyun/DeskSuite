@@ -4,7 +4,7 @@ import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, 
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Context } from 'cordis'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 import { materialDefaults } from './material-defaults'
 
 const PLUGIN_ID = 'project-ops-workcrate-projects'
@@ -14,6 +14,7 @@ const FORMAT_VERSION = 1
 const MAX_PROJECTS = 1000
 const MAX_REFERENCES = 5000
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024
+const MAX_PROJECT_DOCUMENT_BYTES = 16 * 1024 * 1024
 export type WorkCrateProjectSortOrder = 'manual' | 'name-asc' | 'name-desc' | 'created-newest' | 'created-oldest'
 
 export interface WorkCratePreview {
@@ -171,10 +172,6 @@ function safeName(value: string): string {
   return name
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 async function canonicalFile(value: string): Promise<{ path: string; info: Awaited<ReturnType<typeof stat>> }> {
   if (!isAbsolute(value)) throw new Error('文件路径必须是绝对路径')
   const path = await realpath(value)
@@ -218,6 +215,14 @@ async function writeAtomic(path: string, data: string | Uint8Array): Promise<voi
     await rm(tempPath, { force: true })
     throw error
   }
+}
+
+async function readProjectDocument(path: string): Promise<ProjectDocument> {
+  const info = await stat(path)
+  if (!info.isFile() || info.size > MAX_PROJECT_DOCUMENT_BYTES) throw new Error('工程数据文件不是普通文件或超过 16 MiB')
+  const bytes = await readFile(path)
+  if (bytes.byteLength > MAX_PROJECT_DOCUMENT_BYTES) throw new Error('工程数据文件读取后超过 16 MiB')
+  return documentSchema.parse(JSON.parse(bytes.toString('utf8')))
 }
 
 async function copyDirectory(source: string, target: string): Promise<void> {
@@ -401,7 +406,7 @@ class WorkCrateProjectsServiceImpl implements WorkCrateProjectsService {
     const root = await this.projectDirectory(projectId)
     const path = join(root, 'project.json')
     const readCandidate = async (candidate: string): Promise<ProjectDocument> => {
-      const doc = documentSchema.parse(JSON.parse(await readFile(candidate, 'utf8')))
+      const doc = await readProjectDocument(candidate)
       if (doc.version !== FORMAT_VERSION || doc.projectId !== projectId) throw new Error('工程数据版本或 ID 与索引不匹配')
       return doc
     }
@@ -418,7 +423,7 @@ class WorkCrateProjectsServiceImpl implements WorkCrateProjectsService {
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('工程目录不能是符号链接或重解析点')
     const canonicalRoot = await realpath(root)
     if (!samePath(canonicalRoot, root)) throw new Error('工程目录解析后路径发生变化')
-    const document = documentSchema.parse(JSON.parse(await readFile(join(canonicalRoot, 'project.json'), 'utf8')))
+    const document = await readProjectDocument(join(canonicalRoot, 'project.json'))
     if (document.version !== FORMAT_VERSION || document.projectId !== projectId) throw new Error('工程数据版本或 ID 与目录不匹配')
     const previews = [document.project.mainImage, ...document.references.map((reference) => reference.customPreview)]
     for (const preview of previews) {
@@ -439,7 +444,9 @@ class WorkCrateProjectsServiceImpl implements WorkCrateProjectsService {
   private async writeDocument(projectId: string, doc: ProjectDocument): Promise<void> {
     const root = await this.projectDirectory(projectId)
     const parsed = documentSchema.parse({ ...doc, version: FORMAT_VERSION, projectId })
-    await writeAtomic(join(root, 'project.json'), JSON.stringify(parsed, null, 2))
+    const serialized = JSON.stringify(parsed, null, 2)
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_PROJECT_DOCUMENT_BYTES) throw new Error('工程数据文件超过 16 MiB 限额')
+    await writeAtomic(join(root, 'project.json'), serialized)
   }
 
   private async mutateDocument<T>(projectId: string, mutate: (doc: ProjectDocument) => T | Promise<T>): Promise<T> {
@@ -937,7 +944,7 @@ const plugin = {
     const disposeProvider = ctx.reflect.provide('workcrateProjects', service)
 
     ctx.ipc.handle('workcrateProjects', {
-      list: () => service.list(false),
+      list: (includeArchived = false) => service.list(includeArchived),
       get: (projectId: string) => service.get(projectId),
       create: (name: string) => service.create(name),
       delete: (projectId: string) => service.delete(projectId),
@@ -946,18 +953,28 @@ const plugin = {
       saveProgramPresets: (presets: WorkCrateFieldPresets) => service.saveProgramPresets(presets),
       effectivePresets: (projectId?: string) => service.effectivePresets(projectId),
       relocateProject: ({ projectId, directory }: { projectId: string; directory: string }) => service.relocateProject(projectId, directory)
+    }, {
+      list: z.tuple([z.boolean().optional()]),
+      get: z.tuple([z.string().uuid()]),
+      create: z.tuple([z.string().trim().min(1).max(120)]),
+      delete: z.tuple([z.string().uuid()]),
+      getDocumentPath: z.tuple([z.string().uuid()]),
+      getProgramPresets: z.tuple([]),
+      saveProgramPresets: z.tuple([fieldPresetsSchema]),
+      effectivePresets: z.union([z.tuple([]), z.tuple([z.string().uuid().nullable().optional()])]),
+      relocateProject: z.tuple([z.object({ projectId: z.string().uuid(), directory: z.string().trim().min(1).max(32768) }).strict()])
     })
 
     const result = async (operation: () => unknown | Promise<unknown>) => {
       try { return mcpText(JSON.stringify((await operation()) ?? null)) }
-      catch (error) { return mcpError(messageOf(error)) }
+      catch (error) { return mcpErrorFrom(error) }
     }
     ctx.mcp.registerTool('workcrate_projects_list', {
       description: '列出 WorkCrate 工程。',
       inputSchema: { includeArchived: z.boolean().optional() },
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await service.list(args.includeArchived === true))) }
-        catch (error) { return mcpError(messageOf(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_project_get', {
@@ -965,7 +982,7 @@ const plugin = {
       inputSchema: { projectId: z.string().uuid() },
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await service.get(args.projectId as string))) }
-        catch (error) { return mcpError(messageOf(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('workcrate_project_document_get', {

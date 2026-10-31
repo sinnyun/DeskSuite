@@ -2,7 +2,7 @@ import '../shell.css'
 import { useEffect } from 'react'
 import type { ReactElement } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
-import { SlotRenderer, log, useLayout } from '../../../workbench/sdk'
+import { SlotRenderer, log, useLayoutShallow } from '../../../workbench/sdk'
 import { TopBar } from './TopBar'
 import { LeftSidebar } from './LeftSidebar'
 import { CenterWorkspace } from './CenterWorkspace'
@@ -23,7 +23,12 @@ function useWorkbenchShortcuts(): void {
     resetLayout,
     toggleFloatingPanel,
     openFloatingPanel
-  } = useLayout()
+  } = useLayoutShallow((state) => ({
+    leftCollapsed: state.leftCollapsed, rightCollapsed: state.rightCollapsed, bottomCollapsed: state.bottomCollapsed,
+    toggleLeftCollapsed: state.toggleLeftCollapsed, toggleRightCollapsed: state.toggleRightCollapsed,
+    toggleBottomCollapsed: state.toggleBottomCollapsed, toggleZenMode: state.toggleZenMode,
+    resetLayout: state.resetLayout, toggleFloatingPanel: state.toggleFloatingPanel, openFloatingPanel: state.openFloatingPanel
+  }))
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -108,7 +113,12 @@ export function WorkbenchShell(): ReactElement {
     toggleLeftCollapsed,
     toggleRightCollapsed,
     toggleBottomCollapsed
-  } = useLayout()
+  } = useLayoutShallow((state) => ({
+    leftCollapsed: state.leftCollapsed, rightCollapsed: state.rightCollapsed, bottomCollapsed: state.bottomCollapsed,
+    setLeftWidth: state.setLeftWidth, setRightWidth: state.setRightWidth, setBottomHeight: state.setBottomHeight,
+    toggleLeftCollapsed: state.toggleLeftCollapsed, toggleRightCollapsed: state.toggleRightCollapsed,
+    toggleBottomCollapsed: state.toggleBottomCollapsed
+  }))
 
   useWorkbenchShortcuts()
 

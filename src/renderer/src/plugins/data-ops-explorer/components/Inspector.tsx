@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import {
   call,
+  errorText,
   getService,
   log,
   useUiKit,
@@ -21,7 +22,7 @@ import {
 } from '../../../workbench/sdk'
 import {
   explorerStore,
-  useExplorer,
+  useExplorerShallow,
   visibleEntries,
   type FsEntry
 } from '../store'
@@ -52,7 +53,10 @@ function EntryDetail({ entry }: { entry: FsEntry }): ReactElement {
     DesktopTagPill,
     ThemeCollapsibleSection
   } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    path: s.path, entries: s.entries, search: s.search, kindFilter: s.kindFilter, favoriteOnly: s.favoriteOnly,
+    minRating: s.minRating, tagFilter: s.tagFilter, sortField: s.sortField, sortOrder: s.sortOrder
+  }))
   const preview = usePreview(entry)
   const meta = useEntryMeta(entry.path)
   const [tagDraft, setTagDraft] = useState('')
@@ -67,7 +71,7 @@ function EntryDetail({ entry }: { entry: FsEntry }): ReactElement {
       await call('clipboard', 'writeText', entry.path)
       log('event', 'Inspector', '已复制路径到剪贴板')
     } catch (error) {
-      log('error', 'Inspector', '复制路径失败', String(error))
+      log('error', 'Inspector', '复制路径失败', errorText(error, '复制路径失败'))
     }
   }
 
@@ -82,7 +86,7 @@ function EntryDetail({ entry }: { entry: FsEntry }): ReactElement {
       await call('clipboard', 'writeText', preview.content)
       log('event', 'Inspector', '已复制文件内容到剪贴板')
     } catch (error) {
-      log('error', 'Inspector', '复制文件内容失败', String(error))
+      log('error', 'Inspector', '复制文件内容失败', errorText(error, '复制文件内容失败'))
     }
   }
 
@@ -116,7 +120,7 @@ function EntryDetail({ entry }: { entry: FsEntry }): ReactElement {
       const { jobId } = await call<{ jobId: string }>('fileOps', 'execute', plan.planId)
       log('event', 'Inspector', `已批准目录清单写入任务：${jobId}`)
     } catch (error) {
-      log('error', 'Inspector', '导出目录清单失败', String(error))
+      log('error', 'Inspector', '导出目录清单失败', errorText(error, '导出目录清单失败'))
     }
   }
 
@@ -243,7 +247,10 @@ function EntryDetail({ entry }: { entry: FsEntry }): ReactElement {
 
 export function Inspector(): ReactElement {
   const { DesktopButton, DesktopIconButton } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    focusedPath: s.focusedPath, entries: s.entries, descendantEntries: s.descendantEntries,
+    selectedPaths: s.selectedPaths, path: s.path
+  }))
   const entry = state.focusedPath
     ? (state.entries.find((item) => item.path === state.focusedPath)
       ?? state.descendantEntries.find((item) => item.path === state.focusedPath))

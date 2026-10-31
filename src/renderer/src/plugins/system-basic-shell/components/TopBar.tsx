@@ -17,7 +17,7 @@ import {
   SlotRenderer,
   log,
   logStore,
-  useLayout,
+  useLayoutShallow,
   useTheme,
   useUiKit
 } from '../../../workbench/sdk'
@@ -51,7 +51,14 @@ export function TopBar(): ReactElement {
     floatingPanelOpen,
     toggleFloatingPanel,
     openFloatingPanel
-  } = useLayout()
+  } = useLayoutShallow((state) => ({
+    leftCollapsed: state.leftCollapsed, toggleLeftCollapsed: state.toggleLeftCollapsed,
+    rightCollapsed: state.rightCollapsed, toggleRightCollapsed: state.toggleRightCollapsed,
+    bottomCollapsed: state.bottomCollapsed, toggleBottomCollapsed: state.toggleBottomCollapsed,
+    zenMode: state.zenMode, toggleZenMode: state.toggleZenMode, resetLayout: state.resetLayout,
+    floatingPanelOpen: state.floatingPanelOpen, toggleFloatingPanel: state.toggleFloatingPanel,
+    openFloatingPanel: state.openFloatingPanel
+  }))
 
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
 

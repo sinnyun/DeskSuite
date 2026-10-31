@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Archive, File, Folder, Image, MapPin, Music2, Package, Trash2, Video, X } from 'lucide-react'
-import { call, log, useLayout, useUiKit } from '../../../workbench/sdk'
+import { call, errorText, log, useLayoutShallow, useUiKit } from '../../../workbench/sdk'
 import { basketStore, useBasket } from '../basket'
 import { KIND_LABEL, formatBytes } from '../format'
 
@@ -30,7 +30,7 @@ function categoryIcon(kind: BasketFilter): ReactElement {
 
 export function BasketPanel(): ReactElement | null {
   const { ThemeFloatingPanel, DesktopButton, DesktopIconButton, DesktopCardButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const items = useBasket()
   const [filter, setFilter] = useState<BasketFilter>('all')
   const [selectedPath, setSelectedPath] = useState('')
@@ -43,7 +43,7 @@ export function BasketPanel(): ReactElement | null {
   const copyPaths = async (): Promise<void> => {
     if (!items.length) return
     try { await call('clipboard', 'writeText', items.map((item) => item.path).join('\n')); log('event', 'Insights', `已复制 ${items.length} 条暂存路径`) }
-    catch (error) { log('error', 'Insights', '复制暂存路径失败', String(error)) }
+    catch (error) { log('error', 'Insights', '复制暂存路径失败', errorText(error, '复制暂存路径失败')) }
   }
 
   return (

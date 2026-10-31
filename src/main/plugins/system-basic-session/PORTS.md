@@ -21,7 +21,7 @@ Session fields include current path, view mode, sort field/order, search and kin
 - `list()` returns `{ activeId, activePaneId, items }`; `get(id)` and `active()` read one workspace.
 - `create(name, layout?)`, `rename(id, name)`, `setLayout(id, layout)`, `setPane(id, paneId, state)`, `activate(id, paneId?)`, and `remove(id)` manage workspaces.
 - Updating the active pane with `setPane` also mirrors that pane into `session.json`. Switching workspaces or panes updates both the active workspace and pane IDs.
-- Layout is restricted to 1, 2, or 4 panes. Each pane owns a complete session snapshot. Changing layout preserves existing panes and creates defaults for newly added panes.
+- Layout is restricted to 1, 2, or 4 visible panes. Each pane owns a complete session snapshot; reducing the visible count retains hidden pane sessions so restoring a larger layout restores them.
 - `flush()` writes pending snapshots immediately.
 
 All fields are validated in the main process by Zod before entering memory or the store. Removing the active workspace selects the first remaining workspace; removing the last one clears the active workspace and resets the current session. The renderer remains responsible for collecting UI state and restoring it through these IPC services.

@@ -1,7 +1,20 @@
 import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
 import { identity, normalize } from '../../services/paths'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
+import {
+  annotationPathsSchema,
+  annotationTagListSchema,
+  annotationTagSchema,
+  annotationsChangedSchema,
+  changedCountSchema,
+  entriesByPathSchema,
+  favoriteResultSchema,
+  importLegacyResultSchema,
+  noteResultSchema,
+  ratingResultSchema,
+  tagCountsSchema
+} from './schemas'
 
 const PLUGIN_ID = 'data-ops-annotations'
 type SqlOutputValue = null | number | bigint | string | NodeJS.NonSharedUint8Array
@@ -50,7 +63,7 @@ const tagInput = z.object({
 })
 const renameInput = z.object({ tagId: z.number().int().positive(), name: z.string().trim().min(1).max(128) })
 const mergeInput = z.object({ sourceId: z.number().int().positive(), targetId: z.number().int().positive() })
-const pathsInput = z.array(z.string().min(1)).min(1).max(1000)
+const pathsInput = z.array(z.string().min(1).max(32768)).min(1).max(1000)
 const rateInput = z.object({ path: z.string().min(1), rating: z.number().int().min(0).max(5) })
 const favoriteInput = z.object({ path: z.string().min(1), favorite: z.boolean() })
 const noteInput = z.object({ path: z.string().min(1), note: z.string().max(20_000) })
@@ -58,7 +71,10 @@ const tagAssignmentInput = z.object({ paths: pathsInput, tagId: z.number().int()
 const legacyValueSchema = z.object({
   favorite: z.boolean().optional(),
   rating: z.number().int().min(0).max(5).optional(),
-  tags: z.array(z.string()).optional()
+  tags: z.array(z.string().max(128)).max(100).optional()
+})
+const legacyImportInputSchema = z.record(z.string().min(1).max(32768), z.unknown()).superRefine((value, ctx) => {
+  if (Object.keys(value).length > 10_000) ctx.addIssue({ code: 'custom', message: '旧元数据条目超过 10,000 条上限' })
 })
 
 function pathPair(path: string): { path: string; pathKey: string } {
@@ -67,7 +83,7 @@ function pathPair(path: string): { path: string; pathKey: string } {
 }
 
 function rowToTag(row: TagRow): TagDto {
-  return {
+  return annotationTagSchema.parse({
     id: row.id,
     name: row.name,
     parentId: row.parent_id,
@@ -75,7 +91,7 @@ function rowToTag(row: TagRow): TagDto {
     color: row.color,
     sort: row.sort,
     children: []
-  }
+  })
 }
 
 const annotationsPlugin: Plugin = {
@@ -197,11 +213,11 @@ const annotationsPlugin: Plugin = {
         if (parent && parent.id !== node.id) parent.children.push(node)
         else roots.push(node)
       }
-      return roots
+      return annotationTagListSchema.parse(roots)
     }
 
     function emitChanged(kind: 'tree' | 'metadata', paths?: string[]): void {
-      ctx.ipc.broadcast('annotations:changed', { kind, paths, at: Date.now() })
+      ctx.ipc.broadcast('annotations:changed', annotationsChangedSchema.parse({ kind, paths, at: Date.now() }))
     }
 
     function forPaths(pathsValue: unknown): Record<string, EntryAnnotation> {
@@ -252,7 +268,7 @@ const annotationsPlugin: Plugin = {
           })
         }
       }
-      return Object.fromEntries(pairs.map((pair, index) => [paths[index], records.get(pair.pathKey)!]))
+      return entriesByPathSchema.parse(Object.fromEntries(pairs.map((pair, index) => [paths[index], records.get(pair.pathKey)!])))
     }
 
     function descendantTagIds(tagId: number): number[] {
@@ -281,14 +297,14 @@ const annotationsPlugin: Plugin = {
          ORDER BY m.path`,
         ...ids
       )
-      return rows.map((row) => row.path)
+      return annotationPathsSchema.parse(rows.map((row) => row.path))
     }
 
     function tagCounts(): Record<string, number> {
       const rows = ctx.db.all<{ tag_id: number; count: number }>(
         'SELECT tag_id, COUNT(*) AS count FROM file_tags GROUP BY tag_id'
       )
-      return Object.fromEntries(rows.map((row) => [String(row.tag_id), row.count]))
+      return tagCountsSchema.parse(Object.fromEntries(rows.map((row) => [String(row.tag_id), row.count])))
     }
 
     function setFavorite(inputValue: unknown): boolean {
@@ -299,7 +315,7 @@ const annotationsPlugin: Plugin = {
         return value
       })
       emitChanged('metadata', [pair.path])
-      return input.favorite
+      return favoriteResultSchema.parse(input.favorite)
     }
 
     function setRating(inputValue: unknown): number {
@@ -310,7 +326,7 @@ const annotationsPlugin: Plugin = {
         return value
       })
       emitChanged('metadata', [pair.path])
-      return input.rating
+      return ratingResultSchema.parse(input.rating)
     }
 
     function setNote(inputValue: unknown): string {
@@ -321,7 +337,7 @@ const annotationsPlugin: Plugin = {
         return value
       })
       emitChanged('metadata', [pair.path])
-      return input.note
+      return noteResultSchema.parse(input.note)
     }
 
     function assignTag(inputValue: unknown): number {
@@ -335,7 +351,7 @@ const annotationsPlugin: Plugin = {
         }
       })
       emitChanged('metadata', pairs.map((pair) => pair.path))
-      return pairs.length
+      return changedCountSchema.parse(pairs.length)
     }
 
     function unassignTag(inputValue: unknown): number {
@@ -349,7 +365,7 @@ const annotationsPlugin: Plugin = {
         }
       })
       emitChanged('metadata', pairs.map((pair) => pair.path))
-      return count
+      return changedCountSchema.parse(count)
     }
 
     function renameTag(inputValue: unknown): TagDto {
@@ -411,17 +427,15 @@ const annotationsPlugin: Plugin = {
         db.run('DELETE FROM tags WHERE id = ?', tagId)
       })
       emitChanged('tree')
-      return true
+      return favoriteResultSchema.parse(true)
     }
 
     function importLegacy(inputValue: unknown): { imported: number; skipped: number } {
-      if (!inputValue || typeof inputValue !== 'object' || Array.isArray(inputValue)) {
-        throw new Error('旧元数据必须是路径到标注的对象')
-      }
+      const legacy = legacyImportInputSchema.parse(inputValue)
       let imported = 0
       let skipped = 0
       ctx.db.tx(() => {
-        for (const [path, raw] of Object.entries(inputValue)) {
+        for (const [path, raw] of Object.entries(legacy)) {
           const parsed = legacyValueSchema.safeParse(raw)
           if (!parsed.success) {
             skipped += 1
@@ -447,7 +461,7 @@ const annotationsPlugin: Plugin = {
         }
       })
       emitChanged('metadata')
-      return { imported, skipped }
+      return importLegacyResultSchema.parse({ imported, skipped })
     }
 
     ctx.ipc.handle('annotations', {
@@ -465,6 +479,21 @@ const annotationsPlugin: Plugin = {
       merge: mergeTags,
       remove: removeTag,
       importLegacy
+    }, {
+      forPaths: z.tuple([pathsInput]),
+      pathsForTag: z.tuple([z.number().int().positive()]),
+      counts: z.tuple([]),
+      setFavorite: z.tuple([favoriteInput]),
+      setRating: z.tuple([rateInput]),
+      setNote: z.tuple([noteInput]),
+      assignTag: z.tuple([tagAssignmentInput]),
+      unassignTag: z.tuple([tagAssignmentInput]),
+      tree: z.tuple([]),
+      create: z.tuple([tagInput]),
+      rename: z.tuple([renameInput]),
+      merge: z.tuple([mergeInput]),
+      remove: z.tuple([z.number().int().positive()]),
+      importLegacy: z.tuple([legacyImportInputSchema])
     })
 
     const pathParam = z.string().min(1)
@@ -481,7 +510,7 @@ const annotationsPlugin: Plugin = {
         try {
           return mcpText(JSON.stringify(createTag(args)))
         } catch (error) {
-          return mcpError(messageOf(error))
+          return mcpErrorFrom(error)
         }
       }
     })
@@ -497,7 +526,7 @@ const annotationsPlugin: Plugin = {
             : assignTag({ paths: input.paths, tagId: input.tagId })
           return mcpText(JSON.stringify({ changed: count }))
         } catch (error) {
-          return mcpError(messageOf(error))
+          return mcpErrorFrom(error)
         }
       }
     })
@@ -509,7 +538,7 @@ const annotationsPlugin: Plugin = {
           const input = z.object({ tagId: z.number().int().positive() }).parse(args)
           return mcpText(JSON.stringify(pathsForTag(input.tagId)))
         } catch (error) {
-          return mcpError(messageOf(error))
+          return mcpErrorFrom(error)
         }
       }
     })
@@ -521,7 +550,7 @@ const annotationsPlugin: Plugin = {
         try {
           return mcpText(JSON.stringify({ rating: setRating(args) }))
         } catch (error) {
-          return mcpError(messageOf(error))
+          return mcpErrorFrom(error)
         }
       }
     })
@@ -533,15 +562,11 @@ const annotationsPlugin: Plugin = {
         try {
           return mcpText(JSON.stringify({ favorite: setFavorite(args) }))
         } catch (error) {
-          return mcpError(messageOf(error))
+          return mcpErrorFrom(error)
         }
       }
     })
   }
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export default annotationsPlugin

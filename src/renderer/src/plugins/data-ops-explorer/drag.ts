@@ -1,5 +1,5 @@
 import type { DragEvent } from 'react'
-import { call, getService, log } from '../../workbench/sdk'
+import { call, errorText, getService, log } from '../../workbench/sdk'
 
 /**
  * Files are dragged out through the main process (`webContents.startDrag`),
@@ -20,7 +20,7 @@ export function dragFiles(event: DragEvent, entry: { path: string; isDirectory: 
     : [entry.path]
   event.preventDefault()
   void call('fileOps', 'startDrag', paths).catch((error) => {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorText(error, '拖出文件失败')
     log('warn', 'Explorer', '拖出文件失败', message)
   })
 }

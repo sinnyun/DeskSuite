@@ -1,7 +1,12 @@
 import { useSyncExternalStore } from 'react'
+import { useStore } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
+import { createStore } from 'zustand/vanilla'
 import {
   call,
-  callWithTrace,
+  callValidated,
+  callValidatedWithTrace,
+  errorText,
   getService,
   log,
   type BasketService,
@@ -9,6 +14,7 @@ import {
   type SelectionSnapshot
 } from '../../workbench/sdk'
 import { metadataStore } from './metadata'
+import { directoryPageSchema, directoryResultSchema, drivesSchema, fsEntrySchema, pathsForTagSchema, pickedDirectorySchema, quickItemsSchema } from './schema'
 import { usePaneStoreContext } from './PaneContext'
 
 export type ExplorerViewMode = 'list' | 'grid' | 'gallery' | 'grouped'
@@ -152,8 +158,8 @@ let bootstrapCache: { expiresAt: number; value: Promise<{ drives: DriveInfo[]; q
 function loadExplorerBootstrap(): Promise<{ drives: DriveInfo[]; quick: QuickItem[] }> {
   if (bootstrapCache && bootstrapCache.expiresAt > Date.now()) return bootstrapCache.value
   const value = Promise.all([
-    call<DriveInfo[]>('filesystem', 'drives'),
-    call<QuickItem[]>('filesystem', 'quickAccess')
+    callValidated(drivesSchema, 'filesystem', 'drives'),
+    callValidated(quickItemsSchema, 'filesystem', 'quickAccess')
   ]).then(([drives, quick]) => ({ drives, quick }))
   bootstrapCache = { expiresAt: Date.now() + 30_000, value }
   void value.catch(() => { if (bootstrapCache?.value === value) bootstrapCache = undefined })
@@ -171,15 +177,15 @@ export function parentDirectory(path: string): string {
 }
 
 export class ExplorerStore {
-  private state: ExplorerState = { ...INITIAL_STATE }
+  private readonly stateStore = createStore<ExplorerState>(() => { const initial = { ...INITIAL_STATE }; return { ...initial, canBack: false, canForward: false } })
   private selection: SelectionSnapshot = { path: null, entries: [], selected: [] }
-  private listeners = new Set<() => void>()
   private back: string[] = []
   private forward: string[] = []
   private anchorPath: string | null = null
   private token = 0
   private moreToken = 0
   private initialized = false
+  private disposed = false
   private stopMetadata: (() => void) | undefined
   private stopTagEvents: (() => void) | undefined
   private lastDirectory: string | null = null
@@ -188,12 +194,15 @@ export class ExplorerStore {
   constructor(readonly paneId = 'pane-1') {
   }
 
-  getState = (): ExplorerState => this.state
+  private get state(): ExplorerState { return this.stateStore.getState() }
+
+  getStoreApi = () => this.stateStore
+
+  getState = (): ExplorerState => this.stateStore.getState()
 
   getSnapshot = (): SelectionSnapshot => this.selection
 
   subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
     if (!this.stopMetadata) this.stopMetadata = metadataStore.subscribe(() => this.set({}))
     if (!this.stopTagEvents) {
       this.stopTagEvents = window.bridge.onEvent((channel) => {
@@ -202,31 +211,41 @@ export class ExplorerStore {
         }
       })
     }
-    return () => this.listeners.delete(listener)
-  }
-
-  private notify(): void {
-    for (const listener of this.listeners) listener()
-    if (this === activeStore) {
-      for (const listener of activeListeners) listener()
-    }
+    return this.stateStore.subscribe(listener)
   }
 
   private set(patch: Partial<ExplorerState>): void {
-    this.state = { ...this.state, ...patch, canBack: this.back.length > 0, canForward: this.forward.length > 0 }
-    const selectedSet = new Set(this.state.selectedPaths)
-    this.selection = {
-      path: this.state.path,
-      entries: [...this.state.entries, ...this.state.descendantEntries].map(toSelectionItem),
-      selected: [...this.state.entries, ...this.state.descendantEntries]
-        .filter((entry) => selectedSet.has(entry.path))
-        .map(toSelectionItem)
+    const previous = this.stateStore.getState()
+    const state = { ...previous, ...patch, canBack: this.back.length > 0, canForward: this.forward.length > 0 }
+    this.stateStore.setState(state)
+    if (state.path !== previous.path || state.entries !== previous.entries || state.descendantEntries !== previous.descendantEntries || state.selectedPaths !== previous.selectedPaths) {
+      const selectedSet = new Set(state.selectedPaths)
+      this.selection = {
+        path: state.path,
+        entries: [...state.entries, ...state.descendantEntries].map(toSelectionItem),
+        selected: [...state.entries, ...state.descendantEntries]
+          .filter((entry) => selectedSet.has(entry.path))
+          .map(toSelectionItem)
+      }
     }
-    this.notify()
+    if (this === activeStore) for (const listener of activeListeners) listener()
+  }
+
+  dispose(): void {
+    this.disposed = true
+    this.token += 1
+    this.moreToken += 1
+    if (this.searchLogTimer) clearTimeout(this.searchLogTimer)
+    this.searchLogTimer = null
+    this.stopMetadata?.()
+    this.stopMetadata = undefined
+    this.stopTagEvents?.()
+    this.stopTagEvents = undefined
   }
 
   async init(saved?: Partial<PaneSessionState>): Promise<void> {
     if (this.initialized) return
+    this.disposed = false
     this.initialized = true
     try {
       const { drives, quick } = await loadExplorerBootstrap()
@@ -237,29 +256,24 @@ export class ExplorerStore {
         if (saved?.tagFocus) await this.showTagAggregate(saved.tagFocus)
         else if (initialPath) await this.load(initialPath, saved)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorText(error, '文件浏览器初始化失败')
       this.set({ status: 'error', error: message })
       log('error', 'Explorer', '初始化文件浏览器失败', message)
     }
   }
 
   async load(path: string, restore?: Partial<PaneSessionState>, retry = 0, preserveCount = 0, inheritedTraceId?: string): Promise<void> {
+    if (this.disposed) return
     const traceId = inheritedTraceId ?? `explorer-load-${crypto.randomUUID()}`
     const token = ++this.token
     this.moreToken += 1
+    const pageToken = this.moreToken
     this.set({ status: 'loading', error: null })
     log('event', 'Explorer', `读取目录 ${path}`, { path, preserveCount, retry }, ['explorer', 'filesystem'], {
       category: 'action', traceId, phase: '开始', status: 'running'
     })
     try {
-      const result = await callWithTrace<{
-        path: string
-        parent: string | null
-        entries: FsEntry[]
-        truncated: boolean
-          nextCursor?: string | null
-          stale?: boolean
-      }>(traceId, 'filesystem', 'listDir', path)
+      const result = await callValidatedWithTrace(directoryResultSchema, traceId, 'filesystem', 'listDir', path)
       if (token !== this.token) {
         log('info', 'Explorer', `忽略过期目录结果 ${result.path}`, { path: result.path, entries: result.entries.length }, ['explorer', 'filesystem'], {
           category: 'result', traceId, phase: '丢弃过期结果', status: 'ok'
@@ -281,12 +295,9 @@ export class ExplorerStore {
       let truncated = result.truncated
       const seen = new Set(entries.map((entry) => entry.path))
       while (entries.length < preserveCount && nextCursor) {
-        const page = await callWithTrace<{
-          entries: FsEntry[]
-          truncated: boolean
-          nextCursor: string | null
-          stale: boolean
-        }>(traceId, 'filesystem', 'listMore', nextCursor)
+        if (this.disposed || token !== this.token || pageToken !== this.moreToken) return
+        const page = await callValidatedWithTrace(directoryPageSchema, traceId, 'filesystem', 'listMore', nextCursor)
+        if (this.disposed || token !== this.token || pageToken !== this.moreToken) return
         if (page.stale) {
           if (retry < 1) await this.load(path, restore, retry + 1, preserveCount, traceId)
           else {
@@ -305,6 +316,7 @@ export class ExplorerStore {
         nextCursor = page.nextCursor
         truncated = page.truncated
       }
+      if (this.disposed || token !== this.token) return
       this.anchorPath = null
       this.lastDirectory = result.path
       this.set({
@@ -345,7 +357,7 @@ export class ExplorerStore {
       })
     } catch (error) {
       if (token !== this.token) return
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorText(error, '目录读取失败')
       this.set({ status: 'error', error: message })
       log('error', 'Explorer', `打开目录失败：${path}`, { path, error: message }, ['explorer', 'filesystem'], {
         category: 'result', traceId, phase: '处理失败', status: 'error'
@@ -412,7 +424,7 @@ export class ExplorerStore {
   private async patchEntries(changed: string[], directory: string | null): Promise<void> {
     const token = this.token
     try {
-      const stats = await call<FsEntry[]>('filesystem', 'statPaths', changed)
+      const stats = await callValidated(fsEntrySchema.array(), 'filesystem', 'statPaths', changed)
       if (token !== this.token) return
       if (directory !== null && this.state.path !== directory) return
       const changedKeys = new Set(changed.map(normalizePath))
@@ -457,7 +469,7 @@ export class ExplorerStore {
       this.set({ entries: next, selectedPaths, focusedPath })
       void metadataStore.prime(stats.map((entry) => entry.path))
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorText(error, '增量目录更新失败')
       log('warn', 'Explorer', '增量更新目录失败，改为重新加载', message)
       if (this.state.tagFocus) void this.showTagAggregate(this.state.tagFocus)
       else this.refresh()
@@ -465,6 +477,7 @@ export class ExplorerStore {
   }
 
   showTagAggregate = async (tag: TagFocus): Promise<void> => {
+    if (this.disposed) return
     const traceId = `explorer-tag-${crypto.randomUUID()}`
     const token = ++this.token
     this.moreToken += 1
@@ -473,11 +486,12 @@ export class ExplorerStore {
       category: 'action', traceId, phase: '开始', status: 'running'
     })
     try {
-      const paths = await callWithTrace<string[]>(traceId, 'annotations', 'pathsForTag', tag.tagId)
+      const paths = await callValidatedWithTrace(pathsForTagSchema, traceId, 'annotations', 'pathsForTag', tag.tagId)
+      if (this.disposed || token !== this.token) return
       const entries = paths.length > 0
-        ? await callWithTrace<FsEntry[]>(traceId, 'filesystem', 'statPaths', paths)
+        ? await callValidatedWithTrace(fsEntrySchema.array(), traceId, 'filesystem', 'statPaths', paths)
         : []
-      if (token !== this.token) return
+      if (this.disposed || token !== this.token) return
       this.anchorPath = null
       this.set({
         tagFocus: { ...tag },
@@ -508,7 +522,7 @@ export class ExplorerStore {
       })
     } catch (error) {
       if (token !== this.token) return
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorText(error, '标签聚合失败')
       this.set({ status: 'error', error: message })
       log('error', 'Explorer', `标签聚合失败：${tag.name}`, { tagId: tag.tagId, error: message }, ['explorer', 'annotations'], {
         category: 'result', traceId, phase: '处理失败', status: 'error'
@@ -542,13 +556,7 @@ export class ExplorerStore {
       const token = ++this.moreToken
       this.set({ loadingMore: true })
       try {
-        const result = await call<{
-          path: string
-          entries: FsEntry[]
-          truncated: boolean
-          nextCursor: string | null
-          stale: boolean
-        }>('filesystem', 'listMore', cursor)
+        const result = await callValidated(directoryPageSchema, 'filesystem', 'listMore', cursor)
         if (token !== this.moreToken) return
         if (result.stale) {
           this.set({ loadingMore: false })
@@ -568,14 +576,14 @@ export class ExplorerStore {
         void metadataStore.prime(appended.map((entry) => entry.path))
       } catch (error) {
         if (token !== this.moreToken) return
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorText(error, '读取目录下一页失败')
         this.set({ loadingMore: false, status: 'ready', error: message })
         log('error', 'Explorer', `读取目录下一页失败：${path}`, message)
       }
     }
 
   pickAndNavigate = async (): Promise<void> => {
-    const path = await call<string | null>('filesystem', 'pickDirectory')
+    const path = await callValidated(pickedDirectorySchema, 'filesystem', 'pickDirectory')
     if (path) this.navigate(path)
   }
 
@@ -760,7 +768,7 @@ export class ExplorerStore {
       await call('filesystem', 'open', entry.path)
       log('event', 'Explorer', `用系统程序打开 ${entry.name}`)
     } catch (error) {
-      log('error', 'Explorer', `打开文件失败：${entry.name}`, String(error))
+      log('error', 'Explorer', `打开文件失败：${entry.name}`, errorText(error, '无法打开文件'))
     }
   }
 
@@ -768,7 +776,7 @@ export class ExplorerStore {
     try {
       await call('filesystem', 'reveal', entry.path)
     } catch (error) {
-      log('error', 'Explorer', '定位文件失败', String(error))
+      log('error', 'Explorer', '定位文件失败', errorText(error, '无法定位文件'))
     }
   }
 
@@ -831,12 +839,18 @@ export function useCurrentExplorerStore(): ExplorerStore {
   return usePaneStoreContext() ?? activeStore
 }
 
-export function useExplorer(): ExplorerState {
+export function useExplorer(): ExplorerState
+export function useExplorer<T>(selector: (state: ExplorerState) => T): T
+export function useExplorer<T = ExplorerState>(selector: (state: ExplorerState) => T = ((state) => state as unknown as T)): T {
   const paneStore = usePaneStoreContext()
-  return useSyncExternalStore(
-    paneStore?.subscribe ?? subscribeActive,
-    paneStore?.getState ?? (() => activeStore.getState())
-  )
+  const currentStore = useSyncExternalStore(subscribeActive, () => activeStore, () => activeStore)
+  return useStore((paneStore ?? currentStore).getStoreApi(), selector)
+}
+
+export function useExplorerShallow<T>(selector: (state: ExplorerState) => T): T {
+  const paneStore = usePaneStoreContext()
+  const currentStore = useSyncExternalStore(subscribeActive, () => activeStore, () => activeStore)
+  return useStore((paneStore ?? currentStore).getStoreApi(), useShallow(selector))
 }
 
 export function useSelection(): SelectionSnapshot {
@@ -847,7 +861,7 @@ export function useSelection(): SelectionSnapshot {
   )
 }
 
-export function hasActiveFilters(state: ExplorerState): boolean {
+export function hasActiveFilters(state: Pick<ExplorerState, 'search' | 'kindFilter' | 'tagFilter' | 'favoriteOnly' | 'minRating'>): boolean {
   return (
     state.search.trim().length > 0 ||
     state.kindFilter !== 'all' ||
@@ -857,7 +871,7 @@ export function hasActiveFilters(state: ExplorerState): boolean {
   )
 }
 
-export function visibleEntries(state: ExplorerState): FsEntry[] {
+export function visibleEntries(state: Pick<ExplorerState, 'entries' | 'search' | 'kindFilter' | 'favoriteOnly' | 'minRating' | 'tagFilter' | 'sortField' | 'sortOrder'>): FsEntry[] {
   const query = state.search.trim().toLowerCase()
   const list = state.entries.filter((entry) => {
     if (query && !entry.name.toLowerCase().includes(query)) return false

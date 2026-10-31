@@ -186,7 +186,7 @@ try {
   await wait("(() => { const el = document.querySelector('[data-note-editor] .milkdown'); return el ? getComputedStyle(el).getPropertyValue('--crepe-color-background').trim() !== '' : false })()", 'Crepe 主题变量可读')
   // CDP 只读：主题切换不属于笔记保存回归，仅读取当前主题变量。
   const theme = await cdp.evaluate(`getComputedStyle(document.querySelector('[data-note-editor] .milkdown')).getPropertyValue('--crepe-color-background').trim()`)
-  assert.ok(['#1a1a1a', '#ffffff'].includes(theme))
+  assert.ok(['#1a1a1a', '#ffffff', '#fff'].includes(theme))
   report.push({ theme })
 
   // 新建：MCP 的 new 动作与面板内联输入走同一条路径（Electron 不支持 window.prompt）

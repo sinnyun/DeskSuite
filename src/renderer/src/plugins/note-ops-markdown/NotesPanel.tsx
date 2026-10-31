@@ -1,12 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentType, ReactElement } from 'react'
 import { parse as parseYaml, parseDocument, isMap } from 'yaml'
+import { z } from 'zod'
 import { Archive, BookOpen, Clock3, Download, FilePlus2, FolderOpen, History, ImagePlus, Info, Link2, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RefreshCw, Search, Tags } from 'lucide-react'
-import { call, getService, useLayout, useUiKit } from '../../workbench/sdk'
+import { call, callValidated, errorText, getService, useLayoutShallow, useUiKit } from '../../workbench/sdk'
 
 interface FsEntry { name: string; path: string; isDirectory: boolean; kind: string; size: number; modifiedAt: number }
 interface NoteFile extends FsEntry { title: string; tags?: string[] }
 interface Plan { planId: string; target: string; expiresAt: number }
+
+const noteTextResultSchema = z.object({
+  path: z.string().min(1).max(32_768),
+  content: z.string().max(200_000),
+  truncated: z.boolean()
+}).strict()
+
+async function readNoteText(path: string): Promise<z.infer<typeof noteTextResultSchema>> {
+  const result = await callValidated(noteTextResultSchema, 'filesystem', 'readText', path)
+  if (result.path !== path) throw new Error('文件系统返回的笔记路径与请求不一致')
+  return result
+}
+
+const MAX_FRONTMATTER_CHARS = 256 * 1024
+const noteFrontmatterSchema = z.object({
+  tags: z.union([z.string().max(20_000), z.array(z.string().max(200)).max(100)]).optional(),
+  title: z.string().max(1000).optional(),
+  category: z.string().max(240).optional(),
+  status: z.string().max(120).optional(),
+  date: z.string().max(120).optional()
+}).passthrough()
 
 /** note-provider-editor 服务的组件契约，类型在本插件内镜像，不做跨插件文件导入。 */
 interface NoteEditorApi {
@@ -53,7 +75,13 @@ interface NotePreferences { rootDir: string | null; lastNote: string | null; rec
 interface NoteAttributes { title: string; tags: string; category: string; status: string; date: string }
 interface LoreVersion { versionId: string; revisionNumber: number; title: string; createdAt: string; sizeBytes: number; isCurrent: boolean }
 interface TagAggregate { tag: string; count: number; paths: string[] }
-interface JobDone { id: string; state: 'done' | 'failed' | 'canceled'; error?: string }
+const versionJobStartSchema = z.object({ jobId: z.string().min(1).max(256) }).passthrough()
+const jobDoneSchema = z.object({
+  id: z.string().min(1).max(256),
+  state: z.enum(['done', 'failed', 'canceled']),
+  error: z.string().optional()
+}).transform(({ id, state, error }) => ({ id, state, error: error?.slice(0, 2048) }))
+type JobDone = z.infer<typeof jobDoneSchema>
 interface ResourceInfo { uri: string; url: string; name: string; kind: string; available: boolean }
 interface ResourceClient {
   register(path: string): Promise<ResourceInfo>
@@ -67,7 +95,7 @@ const MAX_DEPTH = 6
 
 export function NotesPanel(): ReactElement | null {
   const { ThemeFloatingPanel, ThemeSidebarPanel, ThemeCollapsibleSection, DesktopButton, DesktopIconButton, DesktopInput, DesktopSelect, DesktopTagPill } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, openFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, openFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, openFloatingPanel: state.openFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const NoteEditor = getService<ComponentType<NoteEditorProps>>('noteEditor') ?? PlainNoteEditor
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'notes'
   const [root, setRoot] = useState('')
@@ -199,7 +227,7 @@ export function NotesPanel(): ReactElement | null {
       await editorApi.current?.replaceMarkdown(next)
       applyBody(next)
       setMessage(`已插入 ${refs.length} 个资源链接；原文件保持在原位置`)
-    } catch (cause) { setError(`${messageOf(cause)}；内存图片不支持直接保存，请先保存到磁盘`) }
+    } catch (cause) { setError(`${messageOf(cause, '插入资源链接失败')}；内存图片不支持直接保存，请先保存到磁盘`) }
   }
 
   const linkEagleSource = async (): Promise<void> => {
@@ -214,12 +242,12 @@ export function NotesPanel(): ReactElement | null {
       applyBody(next)
       setEagleSourceInput('')
       setMessage('Eagle 原图已登记为统一资源链接，原文件仍在 Eagle 库中')
-    } catch (cause) { setError(`Eagle 来源无法登记：${messageOf(cause)}`) }
+    } catch (cause) { setError(`Eagle 来源无法登记：${messageOf(cause, 'Eagle 来源登记失败')}`) }
   }
 
   const reloadActive = async (): Promise<void> => {
     if (!activePath) return
-    const result = await call<{ content: string; truncated?: boolean }>('filesystem', 'readText', activePath)
+    const result = await readNoteText(activePath)
     if (result.truncated) throw new Error('笔记超过读取上限，无法重新加载')
     setContent(result.content); setSavedContent(result.content); setExternalChange(false)
     setRevision((value) => value + 1)
@@ -245,7 +273,7 @@ export function NotesPanel(): ReactElement | null {
     try {
       setContent((current) => patchFrontmatter(current, attributes))
       setMessage('笔记属性已更新；保存后写入原 Markdown 文件')
-    } catch (cause) { setError(`属性未更新：${messageOf(cause)}`) }
+    } catch (cause) { setError(`属性未更新：${messageOf(cause, '笔记属性更新失败')}`) }
   }
 
   const loadTagIndex = async (): Promise<void> => {
@@ -256,7 +284,7 @@ export function NotesPanel(): ReactElement | null {
       for (let index = 0; index < scope.length; index += 12) {
         const results = await Promise.all(scope.slice(index, index + 12).map(async (file) => {
           try {
-            const read = await call<{ content: string; truncated: boolean }>('filesystem', 'readText', file.path)
+            const read = await readNoteText(file.path)
             if (read.truncated) return null
             return { file, tags: readNoteDocument(read.content).meta.tags }
           } catch { return null }
@@ -270,7 +298,7 @@ export function NotesPanel(): ReactElement | null {
       setTagIndexLoaded(true)
       setTagIndexCapped(scope.length < files.length)
       setMessage(`标签聚合完成：${counts.size} 个标签，基于 ${scope.length} 篇笔记`)
-    } catch (cause) { setError(`标签聚合失败：${messageOf(cause)}`) }
+    } catch (cause) { setError(`标签聚合失败：${messageOf(cause, '标签索引读取失败')}`) }
     finally { setTagLoading(false) }
   }
 
@@ -287,7 +315,7 @@ export function NotesPanel(): ReactElement | null {
       await runVersionJob(() => call<{ jobId: string }>('versions', 'create', activePath, titleOverride?.trim() || historyTitle.trim() || `笔记快照 ${new Date().toLocaleString('zh-CN')}`))
       setHistoryTitle(''); await refreshHistory(); setMessage('Lore 历史快照已创建')
       return true
-    } catch (cause) { setError(`创建历史快照失败：${messageOf(cause)}`); throw cause }
+    } catch (cause) { setError(`创建历史快照失败：${messageOf(cause, 'Lore 快照创建失败')}`); throw cause }
     finally { setBusy(false) }
   }
 
@@ -299,7 +327,7 @@ export function NotesPanel(): ReactElement | null {
       await runVersionJob(() => call<{ jobId: string }>('versions', 'restore', activePath, version.versionId, true))
       await reloadActive(); await refreshHistory(); setMessage('已恢复所选 Lore 版本')
       return true
-    } catch (cause) { setError(`恢复历史失败：${messageOf(cause)}`); throw cause }
+    } catch (cause) { setError(`恢复历史失败：${messageOf(cause, 'Lore 历史恢复失败')}`); throw cause }
     finally { setBusy(false) }
   }
 
@@ -317,7 +345,7 @@ export function NotesPanel(): ReactElement | null {
       for (let i = 0; i < files.length; i += 10) {
         const batch = files.slice(i, i + 10)
         const results = await Promise.all(batch.map(async (file) => {
-          try { const result = await call<{ content: string; truncated: boolean }>('filesystem', 'readText', file.path); return !result.truncated && result.content.normalize('NFKC').toLocaleLowerCase().includes(query) ? file.path : null }
+          try { const result = await readNoteText(file.path); return !result.truncated && result.content.normalize('NFKC').toLocaleLowerCase().includes(query) ? file.path : null }
           catch { return null }
         }))
         matches.push(...results.filter((path): path is string => path !== null))
@@ -388,7 +416,7 @@ export function NotesPanel(): ReactElement | null {
       if (dirty) { setError('当前笔记有未保存内容，请先保存或切换目录后再刷新'); return }
       if (next.length) {
         const first = next[0]
-        const result = await call<{ content: string; truncated?: boolean }>('filesystem', 'readText', first.path)
+        const result = await readNoteText(first.path)
         if (result.truncated) throw new Error('首篇笔记超过 20 万字符预览上限，请从列表选择其他笔记')
         setActivePath(first.path)
         setContent(result.content)
@@ -413,7 +441,7 @@ export function NotesPanel(): ReactElement | null {
       setTargetDirectory(base)
       setFiles(next)
       if (!target) { setActivePath(''); setContent(''); setSavedContent(''); return }
-      const result = await call<{ content: string; truncated?: boolean }>('filesystem', 'readText', target.path)
+      const result = await readNoteText(target.path)
       if (request !== sessionVersion.current) return
       if (result.truncated) throw new Error('笔记超过文本预览上限（20 万字符），为避免覆盖未读内容，无法打开编辑')
       const recovery = await call<{ markdown: string } | null>('notePanel', 'loadDraft', target.path)
@@ -437,7 +465,7 @@ export function NotesPanel(): ReactElement | null {
     setBusy(true)
     setError('')
     try {
-      const result = await call<{ content: string; truncated?: boolean }>('filesystem', 'readText', file.path)
+      const result = await readNoteText(file.path)
       if (request !== sessionVersion.current) return
       if (result.truncated) throw new Error('笔记超过文本预览上限（20 万字符），为避免覆盖未读内容，无法打开编辑')
       const recovery = await call<{ markdown: string } | null>('notePanel', 'loadDraft', file.path)
@@ -550,7 +578,7 @@ export function NotesPanel(): ReactElement | null {
       }
       // Compare the disk text with the version opened in the editor before making a write plan.
       if (!draftIsNew && !allowOverwrite) {
-        const disk = await call<{ content: string; truncated?: boolean }>('filesystem', 'readText', activePath)
+        const disk = await readNoteText(activePath)
         if (disk.truncated) throw new Error('当前文件超过读取上限，无法安全比较外部修改')
         if (disk.content !== savedContent) {
           setExternalChange(true)
@@ -642,7 +670,7 @@ export function NotesPanel(): ReactElement | null {
     await refresh(root)
     if (oldActive) {
       try {
-        const disk = await call<{ content: string; truncated?: boolean }>('filesystem', 'readText', oldActive)
+        const disk = await readNoteText(oldActive)
         if (!disk.truncated && disk.content !== oldSaved) { setExternalChange(true); setMessage('检测到当前笔记已被外部修改；磁盘版本仍被保留') }
       } catch { setError('当前笔记已无法从磁盘读取，未保存内容仍保留在编辑器中') }
     }
@@ -855,7 +883,7 @@ export function NotesPanel(): ReactElement | null {
               for (let i = 0; i < files.length; i += 10) {
                 const results = await Promise.all(files.slice(i, i + 10).map(async (file) => {
                   if (`${file.title} ${file.path}`.normalize('NFKC').toLocaleLowerCase().includes(needle)) return { path: file.path, title: file.title, excerpt: file.title }
-                  try { const result = await call<{ content: string; truncated: boolean }>('filesystem', 'readText', file.path); if (result.truncated) return null; const index = result.content.normalize('NFKC').toLocaleLowerCase().indexOf(needle); return index < 0 ? null : { path: file.path, title: file.title, excerpt: result.content.slice(Math.max(0, index - 60), index + query.length + 100) } }
+                  try { const result = await readNoteText(file.path); if (result.truncated) return null; const index = result.content.normalize('NFKC').toLocaleLowerCase().indexOf(needle); return index < 0 ? null : { path: file.path, title: file.title, excerpt: result.content.slice(Math.max(0, index - 60), index + query.length + 100) } }
                   catch { return null }
                 }))
                 matches.push(...results.filter((item): item is NonNullable<typeof item> => item !== null))
@@ -1055,12 +1083,14 @@ function PlainNoteEditor({ value, onChange, readOnly, onReady }: NoteEditorProps
 function readNoteDocument(source: string): { front: string; meta: { tags: string[]; title?: string; category?: string; status?: string; date?: string }; body: string } {
   const match = source.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
   if (!match) return { front: '', meta: { tags: [] }, body: source }
-  let meta: Record<string, unknown> = {}
+  if (match[1].length > MAX_FRONTMATTER_CHARS) return { front: '', meta: { tags: [] }, body: source }
+  let meta: z.infer<typeof noteFrontmatterSchema> = {}
   try {
-    const parsed = parseYaml(match[1])
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) meta = parsed as Record<string, unknown>
+    const parsed: unknown = parseYaml(match[1], { maxAliasCount: 100 })
+    const validated = noteFrontmatterSchema.safeParse(parsed)
+    if (validated.success) meta = validated.data
   } catch { /* The source remains editable when frontmatter YAML is incomplete. */ }
-  const tags = Array.isArray(meta.tags) ? meta.tags.map(String) : typeof meta.tags === 'string' ? [meta.tags] : []
+  const tags = Array.isArray(meta.tags) ? meta.tags : typeof meta.tags === 'string' ? [meta.tags] : []
   return { front: match[0], meta: {
     tags,
     title: typeof meta.title === 'string' ? meta.title : undefined,
@@ -1072,6 +1102,7 @@ function readNoteDocument(source: string): { front: string; meta: { tags: string
 
 function patchFrontmatter(source: string, attributes: NoteAttributes): string {
   const match = source.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
+  if (match && match[1].length > MAX_FRONTMATTER_CHARS) throw new Error('Frontmatter 超过 256 KiB，拒绝自动重写')
   const body = match ? source.slice(match[0].length) : source
   const document = parseDocument(match?.[1] ?? '{}')
   if (document.errors.length) throw new Error(`YAML frontmatter 无效：${document.errors[0].message}`)
@@ -1111,7 +1142,7 @@ async function findBacklinks(files: NoteFile[], activePath: string, targetTitle:
     const batch = candidates.slice(index, index + 12)
     const results = await Promise.all(batch.map(async (file) => {
       try {
-        const result = await call<{ content: string; truncated: boolean }>('filesystem', 'readText', file.path)
+        const result = await readNoteText(file.path)
         const found = !result.truncated && extractWikiTargets(result.content).some((title) => title.normalize('NFKC').toLocaleLowerCase() === target)
         return found ? file : null
       } catch { return null }
@@ -1158,22 +1189,24 @@ function downloadBlob(blob: Blob, filename: string): void {
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click()
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
-async function runVersionJob<T extends { jobId: string }>(start: () => Promise<T>): Promise<void> {
+async function runVersionJob(start: () => Promise<unknown>): Promise<void> {
   const early: JobDone[] = []
   let jobId = ''
   let timer = 0
   let unsubscribe = (): void => {}
   const completed = new Promise<JobDone>((resolve, reject) => {
     unsubscribe = window.bridge.onEvent((channel, payload) => {
-      if (channel !== 'job:done' || !payload || typeof payload !== 'object' || !('id' in payload)) return
-      const job = payload as JobDone
+      if (channel !== 'job:done') return
+      const decoded = jobDoneSchema.safeParse(payload)
+      if (!decoded.success) return
+      const job = decoded.data
       if (jobId && job.id === jobId) { window.clearTimeout(timer); unsubscribe(); resolve(job) }
       else if (!jobId) early.push(job)
     })
     timer = window.setTimeout(() => { unsubscribe(); reject(new Error('等待 Lore 任务完成超时；任务可能仍在执行')) }, 120_000)
   })
   try {
-    const started = await start()
+    const started = versionJobStartSchema.parse(await start())
     jobId = started.jobId
     const alreadyDone = early.find((job) => job.id === jobId)
     if (alreadyDone) {
@@ -1185,7 +1218,7 @@ async function runVersionJob<T extends { jobId: string }>(start: () => Promise<T
     if (result.state !== 'done') throw new Error(result.error || `Lore 任务${result.state}`)
   } catch (cause) { window.clearTimeout(timer); unsubscribe(); throw cause }
 }
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+function messageOf(error: unknown, fallback = '笔记操作失败'): string { return errorText(error, fallback) }
 
 async function executeApprovedPlan(
   op: 'mkdir' | 'move',

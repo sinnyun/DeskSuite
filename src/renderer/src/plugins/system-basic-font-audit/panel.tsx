@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Eye, Type } from 'lucide-react'
-import { useLayout, useTheme, useUiKit } from '../../workbench/sdk'
+import { useLayoutShallow, useTheme, useUiKit } from '../../workbench/sdk'
 import { AUDIT_LEVELS, isFontAuditEnabled, setFontAuditEnabled } from './state'
 
 export function FontAuditActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel, openFloatingPanel: state.openFloatingPanel }))
   const active = floatingPanelOpen && activeFloatingPanel === 'font-audit'
   return <ActivityButton icon={<Type className="h-4 w-4" />} label="字体审查" active={active} tooltip="检查主题排版角色与语义文字颜色" onClick={() => active ? closeFloatingPanel() : openFloatingPanel('font-audit')} />
 }
@@ -69,7 +69,7 @@ function useTypographyCoverage(): { counts: Record<string, number>; unmarked: nu
 
 export function FontAuditPanel(): ReactElement {
   const { ThemeFloatingPanel, DesktopButton, DesktopTab } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const { isDark } = useTheme()
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'font-audit'
   const [enabled, setEnabled] = useState(isFontAuditEnabled)

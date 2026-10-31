@@ -3,7 +3,7 @@ import { Info } from 'lucide-react'
 import {
   SlotRenderer,
   useContributions,
-  useLayout,
+  useLayoutShallow,
   useUiKit
 } from '../../../workbench/sdk'
 
@@ -15,7 +15,7 @@ export function RightSidebar(): ReactElement {
     toggleRightCollapsed,
     openRightTab,
     activeRightTab
-  } = useLayout()
+  } = useLayoutShallow((state) => ({ rightWidth: state.rightWidth, rightCollapsed: state.rightCollapsed, toggleRightCollapsed: state.toggleRightCollapsed, openRightTab: state.openRightTab, activeRightTab: state.activeRightTab }))
   const tabs = useContributions('sidebar.right.tabs')
 
   if (rightCollapsed) {

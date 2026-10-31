@@ -3,16 +3,23 @@ import { createHash } from 'node:crypto'
 import type { Context, Plugin } from 'cordis'
 import { spawn } from 'node:child_process'
 import { createReadStream, watch, type FSWatcher } from 'node:fs'
-import { lstat, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { assertWritable, identity, normalize } from '../../services/paths'
-import { mcpError, mcpText } from '../../services/mcp'
+import { errorMessage } from '../../services/error-text'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 import { assertUiWritable } from './write-access'
+import { MAX_VERSION_PREVIEW_BYTES, readBoundedVersionPreviewHandle } from './preview-file'
 import { z } from 'zod'
 
 const PLUGIN_ID = 'data-ops-versions'
 const HISTORY_ROOT = join(app.getPath('userData'), 'data', 'versions')
 const RESTORE_CONFIRMATION = z.literal(true)
+const branchActionSchema = z.object({
+  action: z.enum(['create', 'switch', 'archive', 'merge', 'resolve', 'abort']),
+  name: z.string().max(240).optional(), sourceBranch: z.string().max(240).optional(),
+  strategy: z.enum(['ours', 'theirs']).optional(), overwrite: z.boolean().optional()
+})
 let bridgeLaunches = 0
 
 interface BridgeRequest {
@@ -53,11 +60,11 @@ interface BridgeEntry {
   contentType?: string | null
 }
 
-interface BridgeResponse {
-  ok: boolean
-  result?: unknown
-  error?: string
-}
+const BridgeResponseSchema = z.object({
+  ok: z.boolean(),
+  result: z.unknown().optional(),
+  error: z.string().max(1024 * 1024).nullable().optional()
+}).strict()
 
 type VersionEntity = ReturnType<Context['versionInfo']['getOrCreateEntity']>
 type VersionRecord = ReturnType<Context['versionInfo']['list']>[number]
@@ -110,7 +117,8 @@ function runBridge(request: BridgeRequest): Promise<unknown> {
         return
       }
       try {
-        const response = JSON.parse(Buffer.concat(stdout).toString('utf8')) as BridgeResponse
+        const parsed: unknown = JSON.parse(Buffer.concat(stdout).toString('utf8'))
+        const response = BridgeResponseSchema.parse(parsed)
         if (!response.ok) throw new Error(`Lore ${request.operation}: ${response.error || '操作失败'}`)
         finish(undefined, response.result)
       } catch (error) {
@@ -251,9 +259,15 @@ const plugin: Plugin = {
       const previewPath = resolve(previewRoot, `${versionIdValue}.jpg`)
       if (!previewPath.startsWith(`${previewRoot}${sep}`)) return null
       const metadata = await lstat(previewPath)
-      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 512 * 1024) return null
-      const bytes = await readFile(previewPath)
-      if (bytes.length > 512 * 1024) return null
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_VERSION_PREVIEW_BYTES) return null
+      const handle = await open(previewPath, 'r')
+      let bytes: Buffer | null
+      try {
+        bytes = await readBoundedVersionPreviewHandle(handle, { dev: metadata.dev, ino: metadata.ino })
+      } finally {
+        await handle.close()
+      }
+      if (!bytes) return null
       return `data:image/jpeg;base64,${bytes.toString('base64')}`
     }
 
@@ -297,7 +311,7 @@ const plugin: Plugin = {
         const pending = snapshot.state.pendingRestore as RestoreStatus | undefined
         return { ...base, status: pending?.pending ? 'interrupted_restore' : 'unavailable',
           pendingRestore: pending?.pending ? { ...pending, sourceAvailable: false } : null,
-          diagnostic: error instanceof Error ? error.message : String(error) }
+          diagnostic: errorMessage(error, '原文件不可访问') }
       }
     }
 
@@ -426,12 +440,7 @@ const plugin: Plugin = {
     }
 
     async function branchAction(pathValue: unknown, inputValue: unknown, confirmed: unknown, origin: 'ui' | 'mcp' = 'ui'): Promise<{ jobId: string }> {
-      const inputSchema = z.object({
-        action: z.enum(['create', 'switch', 'archive', 'merge', 'resolve', 'abort']),
-        name: z.string().optional(), sourceBranch: z.string().optional(), strategy: z.enum(['ours', 'theirs']).optional(),
-        overwrite: z.boolean().optional()
-      })
-      const input = inputSchema.parse(inputValue)
+      const input = branchActionSchema.parse(inputValue)
       RESTORE_CONFIRMATION.parse(confirmed)
       if (typeof pathValue !== 'string' || !pathValue.trim()) throw new TypeError('path must be a nonempty string')
       const path = normalize(pathValue)
@@ -624,6 +633,16 @@ const plugin: Plugin = {
       branchAction: (path: unknown, input: unknown, confirm: unknown) => branchAction(path, input, confirm, ctx.commands.executionOrigin ?? 'ui'),
       restore: (path: unknown, versionId: unknown, confirm: unknown) => restore(path, versionId, confirm, ctx.commands.executionOrigin ?? 'ui'),
       abandonInterruptedRestore: (path: unknown, versionId: unknown, confirm: unknown) => abandonInterruptedRestore(path, versionId, confirm, 'ui'),
+    }, {
+      reconcile: z.tuple([z.string().min(1).max(32768), z.literal(true)]),
+      list: z.tuple([z.string().min(1).max(32768)]),
+      preview: z.tuple([z.string().min(1).max(32768), z.string().min(1).max(256)]),
+      state: z.tuple([z.string().min(1).max(32768)]),
+      create: z.tuple([z.string().min(1).max(32768), z.string().max(240)]),
+      branchGraph: z.tuple([z.string().min(1).max(32768), z.boolean().optional()]),
+      branchAction: z.tuple([z.string().min(1).max(32768), branchActionSchema, z.literal(true)]),
+      restore: z.tuple([z.string().min(1).max(32768), z.string().min(1).max(256), z.literal(true)]),
+      abandonInterruptedRestore: z.tuple([z.string().min(1).max(32768), z.string().min(1).max(256), z.literal(true)])
     })
 
     ctx.mcp.registerTool('versions_reconcile', {
@@ -631,7 +650,7 @@ const plugin: Plugin = {
       inputSchema: { path: z.string().min(1), confirm: z.literal(true) }, mutating: true, impact: 'high',
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await reconcile(args.path as string, args.confirm as boolean))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('versions_storage_info', {
@@ -650,7 +669,7 @@ const plugin: Plugin = {
       inputSchema: { path: z.string().min(1) },
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await list(args.path))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('versions_state', {
@@ -658,7 +677,7 @@ const plugin: Plugin = {
       inputSchema: { path: z.string().min(1) },
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await state(args.path))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('versions_branch_graph', {
@@ -666,7 +685,7 @@ const plugin: Plugin = {
       inputSchema: { path: z.string().min(1), includeArchived: z.boolean().optional() },
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await branchGraph(args.path, args.includeArchived === true))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('versions_create', {
@@ -675,7 +694,7 @@ const plugin: Plugin = {
       mutating: true, impact: 'high',
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await create(args.path, args.title, 'mcp'))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('versions_restore', {
@@ -684,7 +703,7 @@ const plugin: Plugin = {
       mutating: true, impact: 'high',
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await restore(args.path, args.versionId, args.confirm, 'mcp'))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('versions_restore_abandon', {
@@ -693,7 +712,7 @@ const plugin: Plugin = {
       mutating: true, impact: 'high',
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await abandonInterruptedRestore(args.path, args.versionId, args.confirm, 'mcp'))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('versions_branch_action', {
@@ -706,7 +725,7 @@ const plugin: Plugin = {
       mutating: true, impact: 'high',
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await branchAction(args.path, args, args.confirm, 'mcp'))) }
-        catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
   }

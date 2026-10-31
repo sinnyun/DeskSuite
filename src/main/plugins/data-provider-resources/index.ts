@@ -2,7 +2,7 @@ import { app, dialog, protocol } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { Context } from 'cordis'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpError, mcpErrorFrom, mcpText } from '../../services/mcp'
 import { MAX_READ, ResourceRegistry, SCHEME } from './registry'
 import { resourceResponse } from './transport'
 import type { ResourcesService } from './types'
@@ -32,6 +32,7 @@ export default {
       if (selected.canceled) return []
       return Promise.all(selected.filePaths.map((path) => resources.register(path)))
     }
+    const reference = z.string().min(1).max(2048)
     ctx.ipc.handle('resources', {
       register: (path: string) => resources.register(path),
       resolve: (reference: string) => resources.resolve(reference),
@@ -41,8 +42,16 @@ export default {
       readText: (reference: string) => resources.readText(reference),
       choose,
       complete: (id: string, result: { value?: unknown; error?: string }) => { pending.get(id)?.(result) }
+    }, {
+      register: z.tuple([z.string().min(1).max(32768)]),
+      resolve: z.tuple([reference]),
+      list: z.tuple([]),
+      forget: z.tuple([reference]),
+      read: z.tuple([reference, z.number().int().min(0).optional(), z.number().int().min(1).max(MAX_READ).optional()]),
+      readText: z.tuple([reference]),
+      choose: z.tuple([]),
+      complete: z.tuple([z.string().uuid(), z.object({ value: z.unknown().optional(), error: z.string().max(2048).optional() }).strict()])
     })
-    const reference = z.string().min(1).max(2048)
     const definitions: Array<{ name: string; description: string; inputSchema: Record<string, z.ZodType>; mutating?: boolean; execute: (args: Record<string, unknown>) => Promise<unknown> }> = [
       { name: 'resource_register', description: 'Register an existing ordinary file on a local drive, mapped drive or UNC share and return its stable resource URI, current URL, MIME type and metadata. Never copies or changes source bytes.', inputSchema: { path: z.string().min(1) }, mutating: true, execute: (args: Record<string, unknown>) => resources.register(args.path as string) },
       { name: 'resource_resolve', description: 'Resolve a registered ID or resource URI to current availability, metadata and versioned load URL. All file formats retain original bytes.', inputSchema: { reference }, execute: (args: Record<string, unknown>) => resources.resolve(args.reference as string) },
@@ -55,7 +64,7 @@ export default {
       ...definition,
       execute: async (args) => {
         try { return mcpText(JSON.stringify(await definition.execute(args))) }
-        catch (error) { return mcpError(String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('resource_view', {
@@ -75,7 +84,7 @@ export default {
             ctx.ipc.broadcast('resources:action', { ...args, requestId: id })
           })
           return result.error ? mcpError(result.error) : mcpText(JSON.stringify(result.value ?? true))
-        } catch (error) { return mcpError(String(error)) }
+        } catch (error) { return mcpErrorFrom(error) }
       }
     })
   }

@@ -1,9 +1,12 @@
 import type { ReactElement } from 'react'
-import { SlotRenderer, useContributions, useLayout, useUiKit } from '../../../workbench/sdk'
+import { SlotRenderer, useContributions, useLayoutShallow, useUiKit } from '../../../workbench/sdk'
 
 export function LeftSidebar(): ReactElement {
   const { ThemeSidebarPanel } = useUiKit()
-  const { leftWidth, leftCollapsed, toggleLeftCollapsed, activeLeftTab, openLeftTab } = useLayout()
+  const { leftWidth, leftCollapsed, toggleLeftCollapsed, activeLeftTab, openLeftTab } = useLayoutShallow((state) => ({
+    leftWidth: state.leftWidth, leftCollapsed: state.leftCollapsed, toggleLeftCollapsed: state.toggleLeftCollapsed,
+    activeLeftTab: state.activeLeftTab, openLeftTab: state.openLeftTab
+  }))
   const tabs = useContributions('sidebar.left.tabs')
 
   return (

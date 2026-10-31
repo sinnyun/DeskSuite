@@ -21,6 +21,9 @@ Consumes `ui` and main IPC `clipboard`: `readText`, `readImage`, `writeText`, `c
 `historyImage`, `importLegacy`, `setFavorite`, `removeHistory`, `clearHistory`, `useHistory`, `updateHistory`,
 `groups`, `createGroup`, `renameGroup`, `deleteGroup`, and `assignGroup`.
 
+The one-time legacy history import is bounded in the main process to 500 strings, 1,000,000 characters per string, and 2 MiB total.
+- Renderer decodes history (50 entries maximum), groups (50 maximum), text (4,000,000 characters maximum), and PNG data URLs before storing IPC responses in React state. Image previews are limited to 8 MiB PNG bytes and invalid/oversized stored image files return `null`.
+
 ## Storage and behavior
 
 - History is owned by main-process `store`; the old `desksuite.clipboard.history` localStorage key is imported once and removed after the IPC migration succeeds.

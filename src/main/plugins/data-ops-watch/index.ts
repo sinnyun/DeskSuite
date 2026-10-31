@@ -1,6 +1,8 @@
 import { dirname, isAbsolute, normalize, resolve } from 'node:path'
 import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
+import { errorMessage } from '../../services/error-text'
+import { watchedDirectoriesSchema, watchedFsChangedSchema, watchErrorSchema } from './schemas'
 
 interface PendingChange {
   paths: Set<string>
@@ -44,11 +46,11 @@ const watchPlugin: Plugin = {
     })
 
     const emit = (dir: string, change: PendingChange): void => {
-      ctx.ipc.broadcast('fs:changed', {
+      ctx.ipc.broadcast('fs:changed', watchedFsChangedSchema.parse({
         paths: change.invalidate ? [] : [...change.paths],
         dirs: [dir],
         invalidate: change.invalidate
-      })
+      }))
     }
 
     const schedule = (event: string, eventPath: string): void => {
@@ -94,7 +96,7 @@ const watchPlugin: Plugin = {
 
     watcher.on('all', schedule)
     watcher.on('error', (error) => {
-      ctx.ipc.broadcast('fs:watch:error', { message: error instanceof Error ? error.message : String(error) })
+      ctx.ipc.broadcast('fs:watch:error', watchErrorSchema.parse({ message: errorMessage(error, '文件监听失败') }))
     })
     ctx.ipc.handle('watch', {
       setPaneDirectories: async (paneId: string, directories: string[]) => {
@@ -103,16 +105,20 @@ const watchPlugin: Plugin = {
         const normalized = [...new Set(directories.slice(0, MAX_WATCHED_DIRECTORIES).map(normalizeDirectory))]
         const current = panes.get(paneId)
         if (current && current.length === normalized.length && current.every((dir, index) => dir === normalized[index])) {
-          return [...new Set([...panes.values()].flat())].slice(0, MAX_WATCHED_DIRECTORIES)
+          return watchedDirectoriesSchema.parse([...new Set([...panes.values()].flat())].slice(0, MAX_WATCHED_DIRECTORIES))
         }
         panes.set(paneId, normalized)
-        return updateWatchSet()
+        return watchedDirectoriesSchema.parse(await updateWatchSet())
       },
       clearPane: async (paneId: string) => {
-        if (!panes.delete(paneId)) return [...new Set([...panes.values()].flat())].slice(0, MAX_WATCHED_DIRECTORIES)
-        return updateWatchSet()
+        if (!panes.delete(paneId)) return watchedDirectoriesSchema.parse([...new Set([...panes.values()].flat())].slice(0, MAX_WATCHED_DIRECTORIES))
+        return watchedDirectoriesSchema.parse(await updateWatchSet())
       },
-      getDirectories: async () => updateWatchSet()
+      getDirectories: async () => watchedDirectoriesSchema.parse(await updateWatchSet())
+    }, {
+      setPaneDirectories: z.tuple([z.string().min(1).max(100), z.array(z.string().min(1).max(32768)).max(MAX_WATCHED_DIRECTORIES)]),
+      clearPane: z.tuple([z.string().min(1).max(100)]),
+      getDirectories: z.tuple([])
     })
 
     return async () => {

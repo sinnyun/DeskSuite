@@ -1,10 +1,10 @@
 import type { ReactElement } from 'react'
 import { Folder } from 'lucide-react'
-import { useLayout, useUiKit } from '../../../workbench/sdk'
+import { useLayoutShallow, useUiKit } from '../../../workbench/sdk'
 
 export function ExplorerActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { activeLeftTab, leftCollapsed, openLeftTab, toggleLeftCollapsed } = useLayout()
+  const { activeLeftTab, leftCollapsed, openLeftTab, toggleLeftCollapsed } = useLayoutShallow((state) => ({ activeLeftTab: state.activeLeftTab, leftCollapsed: state.leftCollapsed, openLeftTab: state.openLeftTab, toggleLeftCollapsed: state.toggleLeftCollapsed }))
   const active = activeLeftTab === 'files' && !leftCollapsed
 
   return (

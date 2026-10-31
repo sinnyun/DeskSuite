@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from 'cordis'
 import { Service } from 'cordis'
 import { z } from 'zod'
+import { errorMessage } from './error-text'
 import type { McpToolDef, McpToolResult } from './mcp'
 import { mcpError, mcpText } from './mcp'
 
@@ -32,7 +33,7 @@ export interface CommandDescriptor extends Omit<CommandDefinition, 'run' | 'plan
 export interface CommandsService {
   register(command: CommandDefinition): () => void
   registerMcpTool(name: string, definition: McpToolDef): void
-  registerIpcMethod(service: string, method: string, run: (...args: unknown[]) => unknown): void
+  registerIpcMethod(service: string, method: string, run: (...args: unknown[]) => unknown, inputSchema?: z.ZodType<unknown[]>): void
   executeIpcMethod(service: string, method: string, args: unknown[]): Promise<unknown> | undefined
   list(filter?: string): CommandDescriptor[]
   runFromUi(id: string, args: unknown): Promise<unknown>
@@ -127,7 +128,7 @@ export class CommandsService extends Service {
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 
-  registerIpcMethod(service: string, method: string, run: (...args: unknown[]) => unknown): void {
+  registerIpcMethod(service: string, method: string, run: (...args: unknown[]) => unknown, argsSchema?: z.ZodType<unknown[]>): void {
     if (service === 'commands' || /^(approve|reject|complete|execute)$/i.test(method)) return
     const id = `ipc.${toId(service)}.${toId(method)}`
     const existing = this.registry.get(id)
@@ -141,7 +142,7 @@ export class CommandsService extends Service {
       source: 'ipc',
       mutating: !readOnly,
       impact: readOnly ? 'low' : 'high',
-      inputSchema: z.object({ args: z.array(z.unknown()).max(128).optional() }),
+      inputSchema: z.object({ args: (argsSchema ?? z.array(z.unknown()).max(128)).optional() }),
       plan: (args) => ({ source: 'MCP 命令', operation: `${service}.${method}`, args }),
       run: async (args) => run(...(Array.isArray(args.args) ? args.args : []))
     }
@@ -152,7 +153,8 @@ export class CommandsService extends Service {
   executeIpcMethod(service: string, method: string, args: unknown[]): Promise<unknown> | undefined {
     const command = this.registry.get(`ipc.${toId(service)}.${toId(method)}`)
     if (!command) return undefined
-    return this.runDefinition(command, { args }, undefined, 'ui')
+    const parsed = parseArgs(command, { args })
+    return this.runDefinition(command, parsed, undefined, 'ui')
   }
 
   list(filter?: string): CommandDescriptor[] {
@@ -306,7 +308,7 @@ function descriptor(command: CommandDefinition): CommandDescriptor {
 function asMcpResult(result: unknown): McpToolResult {
   if (typeof result === 'object' && result !== null && 'content' in result && Array.isArray(result.content)) return result as McpToolResult
   try { return mcpText(JSON.stringify(result ?? null)) }
-  catch { return mcpText(String(result)) }
+  catch { return mcpText(errorMessage(result)) }
 }
 
 function toId(value: string): string {

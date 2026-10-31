@@ -38,6 +38,8 @@ Service name: `filesystem`
 
 This plugin only reads user files; all writes are planned and executed by `data-ops-file-operations`.
 
+All three preview readers open the path once, inspect that open handle, and read at most the configured limit plus one byte. This keeps the memory bound in force if the file grows or the path is replaced between metadata lookup and reading. Directories are rejected for text/media previews; non-regular files are rejected.
+
 ## MCP tools provided
 
 | Tool | Arguments | Returns |
@@ -45,6 +47,8 @@ This plugin only reads user files; all writes are planned and executed by `data-
 | `list_drives` | — | text (JSON) |
 | `list_directory` | `path?: string, cursor?: string, limit?: number` (defaults to home / 200 / max 500) | text (formatted page; includes `nextCursor` when more entries remain) |
 | `read_text_file` | `path: string` | text (file content, max 2 MB) |
+| `filesystem_preview_image` | `path: string` | MCP image block; max 12 MB |
+| `filesystem_inspect_media_preview` | `path: string` | JSON text `{ path, mimeType, byteLength }`; reads at most 64 MB and does not transmit the media body |
 
 ## Events broadcast
 

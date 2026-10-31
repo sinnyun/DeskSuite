@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { FolderOpen, Settings } from 'lucide-react'
-import { call, useLayout, useTheme, useUiKit } from '../../workbench/sdk'
+import { call, errorText, useLayoutShallow, useTheme, useUiKit } from '../../workbench/sdk'
 import { AdminSettings, type AdminSettingsSection } from './AdminSettings'
 
 interface SettingsDescriptor {
@@ -25,16 +25,61 @@ interface FieldSchema {
   format?: string
 }
 
+const SETTINGS_ERROR_FALLBACK = '设置保存失败，请检查配置后重试'
+
+function formatSettingsIssues(issues: unknown, namespace: string): string {
+  if (!Array.isArray(issues)) return ''
+  const lines = issues.slice(0, 20).flatMap((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return []
+    const issue = item as { path?: unknown; message?: unknown }
+    if (!Array.isArray(issue.path) || issue.path.length > 16 || typeof issue.message !== 'string') return []
+    const path = issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number')
+    if (path.length !== issue.path.length) return []
+    const boundedPath = path.map((part) => typeof part === 'string' ? part.slice(0, 128) : part)
+    const rawPath = boundedPath.join('.')
+    const field = boundedPath.length === 1 && typeof boundedPath[0] === 'string'
+      ? FIELD_TITLES[`${namespace}.${boundedPath[0]}`] ?? rawPath
+      : rawPath
+    return [`${field || '设置'}：${issue.message.slice(0, 256)}`]
+  })
+  return lines.length ? errorText(`设置未保存：${lines.join('；')}`, SETTINGS_ERROR_FALLBACK) : ''
+}
+
+function settingsErrorText(cause: unknown, namespace: string): string {
+  // Inspect the original bounded JSON error envelope so it can be converted to
+  // field labels; every generated or fallback message still passes through the
+  // shared SDK sanitizer before it reaches the UI.
+  const raw = cause instanceof Error ? cause.message
+    : typeof cause === 'string' ? cause
+      : typeof cause === 'object' && cause !== null && 'message' in cause && typeof cause.message === 'string' ? cause.message
+        : ''
+  if (raw.length <= 8192) {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        const payload = parsed as { code?: unknown; namespace?: unknown; errors?: unknown }
+        if (payload.code === 'invalid_settings' && payload.namespace === namespace && Array.isArray(payload.errors)) {
+          const formatted = formatSettingsIssues(payload.errors, namespace)
+          if (formatted) return formatted
+        }
+      }
+    } catch {
+      // Unknown errors remain readable below; only the known settings envelope is decoded.
+    }
+  }
+  return errorText(cause, SETTINGS_ERROR_FALLBACK)
+}
+
 export function SettingsActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel, openFloatingPanel: state.openFloatingPanel }))
   const active = floatingPanelOpen && activeFloatingPanel === 'settings'
   return <ActivityButton icon={<Settings className="w-4 h-4" />} label="设置" active={active} tooltip="程序与插件设置" onClick={() => active ? closeFloatingPanel() : openFloatingPanel('settings')} />
 }
 
 export function SettingsPanel(): ReactElement | null {
   const { ThemeFloatingPanel, DesktopButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, openFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, openFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, openFloatingPanel: state.openFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const { setMode } = useTheme()
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'settings'
   const [entries, setEntries] = useState<SettingsDescriptor[]>([])
@@ -64,7 +109,7 @@ export function SettingsPanel(): ReactElement | null {
       const mode = appearance?.value.theme
       if (mode === 'light' || mode === 'dark' || mode === 'system') setMode(mode)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(settingsErrorText(cause, active))
     }
   }
 
@@ -100,7 +145,15 @@ export function SettingsPanel(): ReactElement | null {
     setSaving(true)
     setError('')
     try {
-      const value = await call<Record<string, unknown>>('settings', 'set', active, draft)
+      const validation = await call<
+        | { success: true; value: Record<string, unknown> }
+        | { success: false; errors: Array<{ path: Array<string | number>; message: string }> }
+      >('settings', 'validate', active, draft)
+      if (!validation.success) {
+        setError(formatSettingsIssues(validation.errors, active) || errorText('设置校验失败', SETTINGS_ERROR_FALLBACK))
+        return
+      }
+      const value = await call<Record<string, unknown>>('settings', 'set', active, validation.value)
       setDrafts((current) => ({ ...current, [active]: value }))
       if (active === 'appearance') {
         const mode = value.theme
@@ -108,7 +161,7 @@ export function SettingsPanel(): ReactElement | null {
       }
       setSaved('已保存')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(settingsErrorText(cause, active))
     } finally {
       setSaving(false)
     }
@@ -174,7 +227,7 @@ function SettingField({ name, namespace, schema, value, onChange }: { name: stri
     return <div className="space-y-1.5"><label className="text-xs font-medium">{label}</label>{schema.description && <p className="text-xs text-[var(--ds-text-muted)]">{schema.description}</p>}<DesktopTextarea value={items.join('\n')} onChange={(event) => onChange(event.target.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))} className="h-24 w-full resize-none font-mono" placeholder="每行一个路径或规则" />{(name === 'writeRoots' || name === 'roots') && <ChooseDirectory onChoose={(path) => onChange([...new Set([...items, path])])} />}</div>
   }
   const isNumber = schema.type === 'number' || schema.type === 'integer'
-  return <label className="block space-y-1.5 text-xs"><span className="font-medium">{label}</span>{schema.description && <span className="block text-xs text-[var(--ds-text-muted)]">{schema.description}</span>}<DesktopInput type={isNumber ? 'number' : 'text'} value={String(value ?? '')} min={schema.minimum} max={schema.maximum} onChange={(event) => onChange(isNumber ? Number(event.target.value) : event.target.value)} className="w-full" /></label>
+  return <label className="block space-y-1.5 text-xs"><span className="font-medium">{label}</span>{schema.description && <span className="block text-xs text-[var(--ds-text-muted)]">{schema.description}</span>}<DesktopInput type={isNumber ? 'number' : 'text'} value={String(value ?? '')} min={schema.minimum} max={schema.maximum} onChange={(event) => onChange(isNumber ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value)} className="w-full" /></label>
 }
 
 function ChooseDirectory({ onChoose }: { onChoose: (path: string) => void }): ReactElement {

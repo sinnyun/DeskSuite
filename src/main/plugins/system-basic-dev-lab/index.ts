@@ -1,6 +1,6 @@
 import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 
 const PROFILE_PATTERN = /^[a-zA-Z0-9-]{1,32}$/
 const MAX_ROWS = 200_000
@@ -153,7 +153,11 @@ const devLabPlugin: Plugin = {
       return { ...job, profile }
     }
 
-    ctx.ipc.handle('devLab', { inject, clear, status })
+    ctx.ipc.handle('devLab', { inject, clear, status }, {
+      inject: z.tuple([countSchema, profileSchema.optional()]),
+      clear: z.tuple([profileSchema.optional()]),
+      status: z.tuple([profileSchema.optional()])
+    })
 
     ctx.mcp.registerTool('dev_inject_data', {
       description: `向 catalog 注入 1 至 ${MAX_ROWS} 条仅用于性能测试的虚拟文件记录`,
@@ -166,7 +170,7 @@ const devLabPlugin: Plugin = {
         try {
           return mcpText(JSON.stringify(inject(args.count, args.profile)))
         } catch (error) {
-          return mcpError(error instanceof Error ? error.message : String(error))
+          return mcpErrorFrom(error)
         }
       }
     })
@@ -179,7 +183,7 @@ const devLabPlugin: Plugin = {
         try {
           return mcpText(JSON.stringify(clear(args.profile)))
         } catch (error) {
-          return mcpError(error instanceof Error ? error.message : String(error))
+          return mcpErrorFrom(error)
         }
       }
     })
@@ -191,7 +195,7 @@ const devLabPlugin: Plugin = {
         try {
           return mcpText(JSON.stringify(status(args.profile)))
         } catch (error) {
-          return mcpError(error instanceof Error ? error.message : String(error))
+          return mcpErrorFrom(error)
         }
       }
     })

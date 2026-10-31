@@ -3,7 +3,7 @@ import { basename, dirname } from 'node:path'
 import { realpath } from 'node:fs/promises'
 import type { Context } from 'cordis'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 import { EagleClient, itemId, localPath, samePath, sourceSchema } from './eagle'
 import type { EagleSource } from './eagle'
 
@@ -11,7 +11,7 @@ export default {
   inject: ['resources', 'store', 'ipc', 'mcp', 'storage'],
   apply(ctx: Context) {
     const key = 'eagle-source-links'
-    ctx.store.register(key, { schema: z.array(sourceSchema).max(50000), default: [], version: 1 })
+    ctx.store.register(key, { schema: z.array(sourceSchema).max(50000), default: [], version: 1, maxBytes: 256 * 1024 * 1024 })
     ctx.storage.register('data-provider-eagle-links', {
       title: 'Eagle 来源链接',
       entries: [{ label: 'Eagle 资源来源索引', storeKey: key }]
@@ -77,6 +77,7 @@ export default {
       if (!source) throw new Error('该文件不在 Eagle 条目目录中')
       return source
     }
+    const linkInputSchema = z.object({ itemId: itemId.optional(), location: z.string().min(1).max(32768).optional() })
     const open = async (id: string): Promise<{ itemId: string; deepLink: string }> => {
       itemId.parse(id)
       const deepLink = `eagle://item/${id}`
@@ -85,9 +86,14 @@ export default {
     }
     const methods = { link, get, inspect, open }
     ctx.reflect.provide('eagleLinks', methods)
-    ctx.ipc.handle('eagleLinks', methods)
+    ctx.ipc.handle('eagleLinks', methods, {
+      link: z.tuple([linkInputSchema.refine((args) => Boolean(args.itemId) !== Boolean(args.location), '请提供唯一的 Eagle 条目 ID 或本地文件位置')]),
+      get: z.tuple([z.string().min(1).max(2048)]),
+      inspect: z.tuple([z.string().min(1).max(2048), z.boolean().optional()]),
+      open: z.tuple([itemId])
+    })
     const definitions: Array<{ name: string; inputSchema: Record<string, z.ZodType>; execute: (args: Record<string, unknown>) => Promise<unknown>; description: string }> = [
-      { name: 'eagle_link', inputSchema: { itemId: itemId.optional(), location: z.string().min(1).max(32768).optional() }, execute: (args: Record<string, unknown>) => link(args as { itemId?: string; location?: string }), description: 'Link an Eagle image original by item ID or original file path/URL using the unified resource service. Saves metadata only; never copies or changes Eagle files.' },
+      { name: 'eagle_link', inputSchema: linkInputSchema.shape, execute: (args: Record<string, unknown>) => link(args as { itemId?: string; location?: string }), description: 'Link an Eagle image original by item ID or original file path/URL using the unified resource service. Saves metadata only; never copies or changes Eagle files.' },
       { name: 'eagle_source', inputSchema: { reference: z.string().min(1).max(2048), refresh: z.boolean().optional() }, execute: (args: Record<string, unknown>) => args.refresh ? inspect(String(args.reference), true) : get(String(args.reference)), description: 'Read persisted Eagle metadata for a resource link; refresh queries the running local Eagle API and confirms the original file.' },
       { name: 'eagle_open_item', inputSchema: { itemId }, execute: (args: Record<string, unknown>) => open(String(args.itemId)), description: 'Open and locate an image item in Eagle through its registered eagle://item/{id} handler.' }
     ]
@@ -95,7 +101,7 @@ export default {
       ...definition, mutating: true,
       execute: async args => {
         try { return mcpText(JSON.stringify(await definition.execute(args))) }
-        catch (error) { return mcpError(String(error)) }
+        catch (error) { return mcpErrorFrom(error) }
       }
     })
   }

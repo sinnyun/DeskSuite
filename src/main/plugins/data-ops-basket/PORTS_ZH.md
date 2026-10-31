@@ -15,6 +15,8 @@
 
 - `ipc`
 - `store`
+- `storage`
+- `mcp`
 
 ## 提供的 IPC 服务
 
@@ -29,6 +31,10 @@
 
 `BasketItem` = `{ path, name, isDirectory, kind, size, modifiedAt, addedAt }`。
 
+## MCP 工具
+
+- `basket_manage({ action: list | add | remove | clear, items?, path? })` 读取或更新暂存篮；写入后广播 `basket:changed`，渲染层据此刷新缓存。
+
 ## 数据契约
 
 - 存储键：`basket`，落盘于 `<userData>/data/basket.json`，信封格式由 `store` 服务负责（含版本号与 `.bak`）。
@@ -37,7 +43,7 @@
 
 ## 广播事件
 
-无。
+`basket:changed` —— 添加、移除或清空后广播。
 
 ## 消费的配置项
 

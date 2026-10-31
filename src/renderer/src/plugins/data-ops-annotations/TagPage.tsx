@@ -3,12 +3,15 @@ import type { ReactElement } from 'react'
 import { ChevronDown, ChevronRight, Merge, Pencil, Plus, Star, Tags, Trash2 } from 'lucide-react'
 import {
   call,
+  callValidated,
+  errorText,
   getService,
   useUiKit,
   type SelectionService,
   type SelectionSnapshot
 } from '../../workbench/sdk'
 import { annotationStore, type AnnotationEntry, type TagItem } from './service'
+import { annotationTagListSchema, annotationsChangedSchema, entriesByPathSchema, tagCountsSchema } from './schemas'
 
 const NOOP_SUBSCRIBE = (): (() => void) => () => {}
 const EMPTY_SELECTION = (): SelectionSnapshot => ({ path: null, entries: [], selected: [] })
@@ -41,8 +44,8 @@ export function TagPage(): ReactElement {
   async function refreshTree(): Promise<void> {
     try {
       const [nextTree, nextCounts] = await Promise.all([
-        call<TagItem[]>('annotations', 'tree'),
-        call<Record<string, number>>('annotations', 'counts').catch(() => ({}))
+        callValidated(annotationTagListSchema, 'annotations', 'tree'),
+        callValidated(tagCountsSchema, 'annotations', 'counts').catch(() => ({}))
       ])
       setTree(nextTree)
       setCounts(nextCounts)
@@ -62,7 +65,7 @@ export function TagPage(): ReactElement {
       return
     }
     try {
-      setEntries(await call<Record<string, AnnotationEntry>>('annotations', 'forPaths', paths))
+      setEntries(await callValidated(entriesByPathSchema, 'annotations', 'forPaths', paths))
       await annotationStore.prime(paths)
     } catch (cause) {
       setError(messageOf(cause))
@@ -71,8 +74,8 @@ export function TagPage(): ReactElement {
 
   useEffect(() => {
     void refreshTree()
-    const unsubscribe = window.bridge.onEvent((channel) => {
-      if (channel === 'annotations:changed') {
+    const unsubscribe = window.bridge.onEvent((channel, payload) => {
+      if (channel === 'annotations:changed' && annotationsChangedSchema.safeParse(payload).success) {
         void refreshTree()
         void refreshEntries()
       }
@@ -382,5 +385,5 @@ function flatten(nodes: TagItem[]): TagItem[] {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error, '标注操作失败')
 }

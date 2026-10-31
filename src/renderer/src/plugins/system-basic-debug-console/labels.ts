@@ -29,6 +29,7 @@ const METHOD_LABELS: Record<string, string> = {
   'basket.get': '读取暂存内容', 'basket.list': '列出暂存内容', 'clipboard.history': '读取剪贴板历史',
   'clipboard.historyImage': '读取剪贴板图片', 'clipboard.groups': '读取剪贴板分组',
   'fileIcons.get': '获取文件图标', 'filesystem.drives': '读取磁盘列表',
+  'filesystem.readText': '读取文本预览', 'filesystem.readImage': '读取图片预览', 'filesystem.readMedia': '读取媒体预览',
   'fileOps.getUndoStack': '读取文件操作撤销记录',
   'filesystem.quickAccess': '读取快捷访问位置', 'filesystem.listDir': '读取目录内容',
   'filesystem.listMore': '读取下一页目录内容', 'filesystem.statPaths': '批量读取文件状态',

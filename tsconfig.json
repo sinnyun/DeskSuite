@@ -9,6 +9,7 @@
     "noUnusedLocals": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node", "vite/client"]
   },
   "include": ["src", "electron.vite.config.ts"]

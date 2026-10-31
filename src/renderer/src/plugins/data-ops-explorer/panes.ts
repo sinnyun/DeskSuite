@@ -1,5 +1,7 @@
-import { call } from '../../workbench/sdk'
+import { call, callValidated } from '../../workbench/sdk'
+import { createStore } from 'zustand/vanilla'
 import { metadataStore } from './metadata'
+import { PaneSessionStateSchema, WorkspaceCatalogSchema, WorkspaceDescriptorSchema } from './workspace-schemas'
 import {
   activeSelectionService,
   createPaneStore,
@@ -51,26 +53,25 @@ const DEFAULT_SESSION: PaneSessionState = {
 }
 
 class ExplorerPanes {
-  private snapshot: ExplorerPanesSnapshot = {
+  private readonly stateStore = createStore<ExplorerPanesSnapshot>(() => ({
     workspaceId: '', workspaceName: '默认工作区', layout: 1, activePaneId: 'pane-1',
     panes: [{ id: 'pane-1', store: createPaneStore('pane-1') }], workspaces: []
-  }
-  private listeners = new Set<() => void>()
+  }))
   private initialized = false
   private loading: Promise<void> | null = null
   private readyToPersist = false
   private persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private paneSubscriptions = new Map<string, () => void>()
   private readonly persistDelay = 250
 
-  getSnapshot = (): ExplorerPanesSnapshot => this.snapshot
+  private get snapshot(): ExplorerPanesSnapshot { return this.stateStore.getState() }
+
+  private set snapshot(value: ExplorerPanesSnapshot) { this.stateStore.setState(value, true) }
+
+  getSnapshot = (): ExplorerPanesSnapshot => this.stateStore.getState()
 
   subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
-
-  private emit(): void {
-    for (const listener of this.listeners) listener()
+    return this.stateStore.subscribe(listener)
   }
 
   async initialize(): Promise<void> {
@@ -79,12 +80,12 @@ class ExplorerPanes {
       this.loading = (async () => {
         await metadataStore.start()
         const [session, catalog] = await Promise.all([
-          call<PaneSessionState>('session', 'get'),
-          call<{ activeId: string | null; activePaneId: string | null; items: WorkspaceDescriptor[] }>('workspaces', 'list')
+          callValidated(PaneSessionStateSchema, 'session', 'get'),
+          callValidated(WorkspaceCatalogSchema, 'workspaces', 'list')
         ])
         let workspace = catalog.items.find((item) => item.id === catalog.activeId)
         if (!workspace) {
-          workspace = await call<WorkspaceDescriptor>('workspaces', 'create', '默认工作区', 1)
+          workspace = await callValidated(WorkspaceDescriptorSchema, 'workspaces', 'create', '默认工作区', 1)
         }
         const fallbackState = session ?? DEFAULT_SESSION
         const rawPanes = workspace.panes?.length
@@ -113,9 +114,8 @@ class ExplorerPanes {
         }
         setActivePaneStore(panes.find((pane) => pane.id === this.snapshot.activePaneId)!.store)
         this.readyToPersist = true
-        for (const pane of panes) pane.store.subscribe(() => this.schedulePersist(pane.id))
+        for (const pane of panes) this.watchPane(pane)
         this.initialized = true
-        this.emit()
       })()
     }
     await this.loading
@@ -123,24 +123,26 @@ class ExplorerPanes {
 
   async setLayout(layout: 1 | 2 | 4): Promise<void> {
     await this.initialize()
-    const workspace = await call<WorkspaceDescriptor>('workspaces', 'setLayout', this.snapshot.workspaceId, layout)
+    await this.flushPendingPanes()
+    const workspace = await callValidated(WorkspaceDescriptorSchema, 'workspaces', 'setLayout', this.snapshot.workspaceId, layout)
     await this.replaceWorkspace(workspace)
   }
 
   async activateWorkspace(workspaceId: string): Promise<void> {
     await this.initialize()
-    const workspace = await call<WorkspaceDescriptor>('workspaces', 'activate', workspaceId)
-    const catalog = await call<{ activeId: string | null; activePaneId: string | null; items: WorkspaceDescriptor[] }>('workspaces', 'list')
+    await this.flushPendingPanes()
+    const workspace = await callValidated(WorkspaceDescriptorSchema, 'workspaces', 'activate', workspaceId)
+    const catalog = await callValidated(WorkspaceCatalogSchema, 'workspaces', 'list')
     await this.replaceWorkspace({ ...workspace, activePaneId: catalog.activePaneId })
     this.snapshot = { ...this.snapshot, workspaces: catalog.items.map(({ id, name, layout }) => ({ id, name, layout })) }
-    this.emit()
   }
 
   async createWorkspace(name: string): Promise<void> {
     await this.initialize()
-    const workspace = await call<WorkspaceDescriptor>('workspaces', 'create', name, this.snapshot.layout)
-    const activated = await call<WorkspaceDescriptor>('workspaces', 'activate', workspace.id)
-    const catalog = await call<{ activeId: string | null; activePaneId: string | null; items: WorkspaceDescriptor[] }>('workspaces', 'list')
+    await this.flushPendingPanes()
+    const workspace = await callValidated(WorkspaceDescriptorSchema, 'workspaces', 'create', name, this.snapshot.layout)
+    const activated = await callValidated(WorkspaceDescriptorSchema, 'workspaces', 'activate', workspace.id)
+    const catalog = await callValidated(WorkspaceCatalogSchema, 'workspaces', 'list')
     this.snapshot = { ...this.snapshot, workspaces: catalog.items.map(({ id, name: title, layout }) => ({ id, name: title, layout })) }
     await this.replaceWorkspace({ ...activated, activePaneId: catalog.activePaneId })
   }
@@ -150,20 +152,21 @@ class ExplorerPanes {
     if (!pane || paneId === this.snapshot.activePaneId) return
     this.snapshot = { ...this.snapshot, activePaneId: paneId }
     setActivePaneStore(pane.store)
-    this.emit()
     void call('workspaces', 'activate', this.snapshot.workspaceId, paneId).catch(() => undefined)
     void call('session', 'set', pane.store.getSessionState(), pane.id).catch(() => undefined)
   }
 
   private async replaceWorkspace(workspace: WorkspaceDescriptor): Promise<void> {
+    const previousWorkspaceId = this.snapshot.workspaceId
     const previous = new Map(this.snapshot.panes.map((pane) => [pane.store.paneId, pane.store]))
+    const retained = new Set(workspace.panes.slice(0, workspace.layout).map((item) => `${workspace.id}:${item.id}`))
     const panes: PaneDescriptor[] = []
     for (const item of workspace.panes.slice(0, workspace.layout)) {
       const storeKey = `${workspace.id}:${item.id}`
       const store = previous.get(storeKey) ?? createPaneStore(storeKey)
       if (!previous.has(storeKey)) {
         await store.init(item.state ?? DEFAULT_SESSION)
-        store.subscribe(() => this.schedulePersist(item.id))
+        this.watchPane({ id: item.id, store })
       }
       panes.push({ id: item.id, store })
     }
@@ -181,7 +184,39 @@ class ExplorerPanes {
     }
     const active = panes.find((pane) => pane.id === this.snapshot.activePaneId) ?? panes[0]
     if (active) setActivePaneStore(active.store)
-    this.emit()
+    for (const [storeKey, store] of previous) {
+      if (!retained.has(storeKey)) {
+        this.paneSubscriptions.get(storeKey)?.()
+        this.paneSubscriptions.delete(storeKey)
+        const paneId = storeKey.slice(`${previousWorkspaceId}:`.length)
+        const timerKey = `${previousWorkspaceId}:${paneId}`
+        const timer = this.persistTimers.get(timerKey)
+        if (timer) clearTimeout(timer)
+        this.persistTimers.delete(timerKey)
+        store.dispose()
+      }
+    }
+  }
+
+  private watchPane(pane: PaneDescriptor): void {
+    const key = pane.store.paneId
+    if (this.paneSubscriptions.has(key)) return
+    this.paneSubscriptions.set(key, pane.store.subscribe(() => this.schedulePersist(pane.id)))
+  }
+
+  private async flushPendingPanes(): Promise<void> {
+    const { workspaceId, activePaneId, panes } = this.snapshot
+    for (const pane of panes) {
+      const key = `${workspaceId}:${pane.id}`
+      const timer = this.persistTimers.get(key)
+      if (timer) clearTimeout(timer)
+      this.persistTimers.delete(key)
+    }
+    await Promise.all(panes.map(async (pane) => {
+      const state = pane.store.getSessionState()
+      await call('workspaces', 'setPane', workspaceId, pane.id, state)
+      if (pane.id === activePaneId) await call('session', 'set', state, pane.id)
+    }))
   }
 
   private schedulePersist(paneId: string): void {

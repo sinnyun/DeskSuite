@@ -1,4 +1,4 @@
-import { copyFile, mkdir, open, readFile, rename } from 'node:fs/promises'
+import { copyFile, mkdir, open, rename } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { Service } from 'cordis'
 import type { Context } from 'cordis'
@@ -8,13 +8,15 @@ export interface StoreDefinition<T> {
   schema: z.ZodType<T>
   default: T
   version?: number
+  /** Maximum serialized UTF-8 document size. Defaults to 32 MiB. */
+  maxBytes?: number
 }
 
 export class StoreError extends Error {
-  code: 'unregistered' | 'invalid-key' | 'invalid-value' | 'version-too-new'
+  code: 'unregistered' | 'invalid-key' | 'invalid-value' | 'invalid-budget' | 'version-too-new'
 
   constructor(
-    code: 'unregistered' | 'invalid-key' | 'invalid-value' | 'version-too-new',
+    code: 'unregistered' | 'invalid-key' | 'invalid-value' | 'invalid-budget' | 'version-too-new',
     message: string,
     options?: { cause?: unknown }
   ) {
@@ -29,6 +31,7 @@ interface StoreEntry {
   fallback: unknown
   version: number
   relativePath: string
+  maxBytes: number
 }
 
 interface Envelope {
@@ -39,6 +42,8 @@ interface Envelope {
 type ReadResult = { status: 'ok'; value: unknown } | { status: 'missing' } | { status: 'corrupt' }
 
 const KEY_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
+export const DEFAULT_STORE_DOCUMENT_MAX_BYTES = 32 * 1024 * 1024
+const MAX_STORE_DOCUMENT_MAX_BYTES = 512 * 1024 * 1024
 
 function isEnoent(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -78,6 +83,10 @@ export class StoreService extends Service {
   /** Register a versioned JSON document below the store root. Path segments are restricted to prevent escape. */
   registerDocument<T>(key: string, relativePath: string, def: StoreDefinition<T>): void {
     this.assertKey(key)
+    const maxBytes = def.maxBytes ?? DEFAULT_STORE_DOCUMENT_MAX_BYTES
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_STORE_DOCUMENT_MAX_BYTES) {
+      throw new StoreError('invalid-budget', `store 文档「${key}」的字节预算须为 1 到 ${MAX_STORE_DOCUMENT_MAX_BYTES} 字节`)
+    }
     const segments = relativePath.split(/[\\/]/)
     if (
       isAbsolute(relativePath) ||
@@ -95,7 +104,8 @@ export class StoreService extends Service {
       schema: def.schema,
       fallback: def.default,
       version: def.version ?? 1,
-      relativePath: segments.join(sep)
+      relativePath: segments.join(sep),
+      maxBytes
     })
   }
 
@@ -164,12 +174,34 @@ export class StoreService extends Service {
   }
 
   private async readCandidate(file: string, entry: StoreEntry): Promise<ReadResult> {
-    let raw: string
+    let handle: Awaited<ReturnType<typeof open>>
     try {
-      raw = await readFile(file, 'utf8')
+      handle = await open(file, 'r')
     } catch (error) {
       return isEnoent(error) ? { status: 'missing' } : { status: 'corrupt' }
     }
+    let raw: string | null = null
+    try {
+      const info = await handle.stat()
+      if (!info.isFile() || info.size > entry.maxBytes) return { status: 'corrupt' }
+      // Read at most the stat size plus one byte. This catches a file that grows
+      // after stat without allowing a race to bypass the registered byte budget.
+      const buffer = Buffer.allocUnsafe(Math.min(info.size + 1, entry.maxBytes + 1))
+      let offset = 0
+      while (offset < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset)
+        if (bytesRead === 0) break
+        offset += bytesRead
+        if (offset > entry.maxBytes) return { status: 'corrupt' }
+      }
+      if (offset !== info.size) return { status: 'corrupt' }
+      raw = buffer.subarray(0, offset).toString('utf8')
+    } catch {
+      return { status: 'corrupt' }
+    } finally {
+      await handle.close().catch(() => {})
+    }
+    if (raw === null) return { status: 'corrupt' }
     const envelope = parseEnvelope(raw)
     if (!envelope) return { status: 'corrupt' }
     if (envelope.version > entry.version) {
@@ -185,7 +217,7 @@ export class StoreService extends Service {
 
   private async writeNow(key: string, entry: StoreEntry, value: unknown): Promise<void> {
     const file = this.fileFor(key, entry)
-    await this.assertStoredVersion(file, entry)
+    const preserveCurrentAsBackup = await this.assertStoredVersion(file, entry)
     const parsed = entry.schema.safeParse(value)
     if (!parsed.success) {
       throw new StoreError('invalid-value', `store "${key}" 的值不符合 schema：${parsed.error.message}`, {
@@ -193,6 +225,10 @@ export class StoreService extends Service {
       })
     }
     const serialized = JSON.stringify({ version: entry.version, data: parsed.data }, null, 2)
+    const byteLength = Buffer.byteLength(serialized, 'utf8')
+    if (byteLength > entry.maxBytes) {
+      throw new StoreError('invalid-value', `store「${key}」序列化后为 ${byteLength} 字节，超过 ${entry.maxBytes} 字节上限`)
+    }
     await mkdir(dirname(file), { recursive: true })
     const tmp = `${file}.tmp`
     const handle = await open(tmp, 'w')
@@ -202,21 +238,46 @@ export class StoreService extends Service {
     } finally {
       await handle.close()
     }
-    try {
-      await copyFile(file, `${file}.bak`)
-    } catch (error) {
-      if (!isEnoent(error)) throw error
+    if (preserveCurrentAsBackup) {
+      try {
+        await copyFile(file, `${file}.bak`)
+      } catch (error) {
+        if (!isEnoent(error)) throw error
+      }
     }
     await rename(tmp, file)
   }
 
-  private async assertStoredVersion(file: string, entry: StoreEntry): Promise<void> {
-    let raw: string
+  private async assertStoredVersion(file: string, entry: StoreEntry): Promise<boolean> {
+    let handle: Awaited<ReturnType<typeof open>>
     try {
-      raw = await readFile(file, 'utf8')
-    } catch {
-      return
+      handle = await open(file, 'r')
+    } catch (error) {
+      if (isEnoent(error)) return false
+      // Preserve the prior failure behavior: let the atomic write/copy surface
+      // any access failure instead of treating an unreadable file as a version.
+      return true
     }
+    let raw: string | null = null
+    try {
+      const info = await handle.stat()
+      if (!info.isFile() || info.size > entry.maxBytes) return false
+      const buffer = Buffer.allocUnsafe(Math.min(info.size + 1, entry.maxBytes + 1))
+      let offset = 0
+      while (offset < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset)
+        if (bytesRead === 0) break
+        offset += bytesRead
+        if (offset > entry.maxBytes) return false
+      }
+      if (offset !== info.size) return false
+      raw = buffer.subarray(0, offset).toString('utf8')
+    } catch {
+      return true
+    } finally {
+      await handle.close().catch(() => {})
+    }
+    if (raw === null) return false
     const envelope = parseEnvelope(raw)
     if (envelope && envelope.version > entry.version) {
       throw new StoreError(
@@ -224,6 +285,7 @@ export class StoreService extends Service {
         `store 文件 ${file} 的版本 ${envelope.version} 高于已注册版本 ${entry.version}，拒绝覆盖`
       )
     }
+    return true
   }
 
   private enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {

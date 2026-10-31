@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { ChevronDown, ChevronRight, FilterX } from 'lucide-react'
-import { useLayout, useLogs, useUiKit, type LogCategory, type LogEntry, type LogLevel } from '../../../workbench/sdk'
+import { useLayoutShallow, useLogs, useUiKit, type LogCategory, type LogEntry, type LogLevel } from '../../../workbench/sdk'
 import {
   LOG_CATEGORIES,
   LOG_LEVELS,
@@ -101,7 +101,7 @@ function TraceGroup({ group }: { group: LogGroup }): ReactElement {
 
 export function ConsolePanel(): ReactElement {
   const { DesktopButton, DesktopIconButton, DesktopInput, DesktopSelect, ThemeFloatingPanel } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const logs = useLogs()
   const view = useConsoleView()
   const filtered = useMemo(() => filterLogs(logs, view), [logs, view])

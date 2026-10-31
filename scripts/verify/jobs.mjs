@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readdir, rm } from 'node:fs/promises'
+import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context, Service } from 'cordis'
 import { ensureOutDir, outDir } from './common.mjs'
@@ -100,6 +100,46 @@ async function checkJobs() {
   assert.equal(stringFailed.snapshot().error, '字符串错误')
   pass('fail 后状态 failed，error 取自 Error.message 或字符串')
 
+  const sensitiveProbe = 'job-secret-probe'
+  const sensitivePath = 'C:\\Users\\audit-user\\private\\job.txt'
+  const protectedJob = jobs.create({ label: `复制 token=${sensitiveProbe} ${sensitivePath}` })
+  protectedJob.progress(1, `Bearer ${sensitiveProbe} ${sensitivePath}`)
+  const protectedProgress = ipc.of('job:progress').at(-1).payload
+  assert.ok(!JSON.stringify(protectedProgress).includes(sensitiveProbe))
+  assert.ok(!JSON.stringify(protectedProgress).includes(sensitivePath))
+  assert.ok(protectedProgress.label.includes('[已脱敏]'))
+  assert.ok(protectedProgress.detail.includes('[本机路径]'))
+  assert.ok(protectedProgress.detail.length <= 2_000)
+  protectedJob.fail(new Error(`认证失败 token=${sensitiveProbe} ${sensitivePath}${'x'.repeat(3_000)}`))
+  const protectedDone = ipc.of('job:done').at(-1).payload
+  assert.ok(protectedDone.error.length <= 2_000)
+  assert.ok(!JSON.stringify(protectedDone).includes(sensitiveProbe))
+  assert.ok(!JSON.stringify(protectedDone).includes(sensitivePath))
+  const longErrorJob = jobs.create({ label: '超长错误' })
+  longErrorJob.fail('e'.repeat(2_500))
+  assert.equal(longErrorJob.snapshot().error.length, 2_000)
+  pass('Jobs label/detail/error 在广播与快照中限长，并遮蔽凭据和本机路径')
+
+  const structuredJob = jobs.create({ label: '结构摘要' })
+  structuredJob.finish({ copied: 3, paths: [sensitivePath, 'relative/file.txt'], metadata: { apiKey: sensitiveProbe } })
+  const structuredSummary = structuredJob.snapshot().summary
+  assert.equal(structuredSummary.copied, 3)
+  assert.deepEqual(structuredSummary.paths, ['[本机路径]', 'relative/file.txt'])
+  assert.equal(structuredSummary.metadata.apiKey, '[已脱敏]')
+  const hugeSummaryJob = jobs.create({ label: '超限摘要' })
+  hugeSummaryJob.finish(Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`field${index}`, 'x'.repeat(2_500)])))
+  assert.deepEqual(hugeSummaryJob.snapshot().summary, { omitted: true, reason: '任务摘要超过 48 KiB 限制' })
+  const nested = {}
+  let cursor = nested
+  for (let index = 0; index < 12; index += 1) { cursor.next = {}; cursor = cursor.next }
+  cursor.value = 'deep'
+  const deepJob = jobs.create({ label: '深层摘要' })
+  deepJob.finish(nested)
+  let boundedCursor = deepJob.snapshot().summary
+  for (let index = 0; index < 7; index += 1) boundedCursor = boundedCursor.next
+  assert.equal(boundedCursor.next, '[深度限制]')
+  pass('Jobs summary 保留常见结构、脱敏凭据/路径，并限制嵌套与 48 KiB 总预算')
+
   assert.ok(jobs.list().some((item) => item.id === failedJob.id))
   for (let i = 0; i < 60; i += 1) {
     const item = jobs.create({ label: `批量任务 ${i}`, total: 1 })
@@ -119,14 +159,17 @@ async function checkAudit() {
 
   const audit = new AuditService(new Context(), auditDir)
   await audit.start()
+  const baseTs = Date.now()
   audit.record({
+    ts: baseTs,
     origin: 'ui',
     tool: 'file_copy',
     allowed: true,
     items: 3,
-    results: { ok: 3, failed: 0 }
+    results: { ok: 3, failed: 0, files: [{ path: 'relative/file.txt', token: 'audit-secret-probe' }] }
   })
   audit.record({
+    ts: baseTs + 1,
     origin: 'mcp',
     tool: 'file_trash',
     access: 'standard',
@@ -134,32 +177,73 @@ async function checkAudit() {
     planId: 'plan_test',
     error: 'MCP 权限不足'
   })
+  audit.record({
+    ts: baseTs + 2,
+    origin: 'command', tool: 'sensitive_failure', allowed: false,
+    error: `token=audit-secret-probe C:\\Users\\audit-user\\private\\audit.txt${'x'.repeat(3_000)}`
+  })
+  audit.record({
+    ts: baseTs + 3,
+    origin: 'ui', tool: 'oversized_result', allowed: true,
+    results: Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`field${index}`, 'x'.repeat(2_500)]))
+  })
   await audit.flush()
 
   const entries = await audit.tail(10)
-  assert.equal(entries.length, 2)
+  assert.equal(entries.length, 4)
   assert.equal(typeof entries[0].ts, 'number')
   assert.equal(entries[0].origin, 'ui')
   assert.equal(entries[0].tool, 'file_copy')
   assert.equal(entries[0].allowed, true)
   assert.equal(entries[0].items, 3)
-  assert.deepEqual(entries[0].results, { ok: 3, failed: 0 })
+  assert.deepEqual(entries[0].results, { ok: 3, failed: 0, files: [{ path: 'relative/file.txt', token: '[已脱敏]' }] })
   assert.equal(entries[1].origin, 'mcp')
   assert.equal(entries[1].access, 'standard')
   assert.equal(entries[1].allowed, false)
   assert.equal(entries[1].planId, 'plan_test')
   assert.equal(entries[1].error, 'MCP 权限不足')
-  pass('record + flush + tail 读回两条审计记录，字段一致且按 ts 升序')
+  assert.ok(entries[2].error.length <= 2_000)
+  assert.ok(!entries[2].error.includes('audit-secret-probe'))
+  assert.ok(!entries[2].error.includes('C:\\Users\\audit-user'))
+  audit.record({ ts: baseTs + 4, origin: 'command', tool: 'long_error', error: 'e'.repeat(2_500) })
+  await audit.flush()
+  assert.equal((await audit.tail(1))[0].error.length, 2_000)
+  assert.deepEqual(entries[3].results, { omitted: true, reason: '审计结果超过 48 KiB 限制' })
+  pass('record + flush + tail 读回审计记录，字段一致且按 ts 升序')
 
   const files = await readdir(auditDir)
+  const auditDiskText = (await readFile(join(auditDir, files[0]), 'utf8'))
+  assert.ok(!auditDiskText.includes('audit-secret-probe'))
+  assert.ok(!auditDiskText.includes('C:\\Users\\audit-user'))
+  assert.ok(auditDiskText.includes('[本机路径]'))
+  assert.ok(auditDiskText.includes('审计结果超过 48 KiB 限制'))
+  pass('JSONL 写入前统一清理错误与结果结构中的凭据/路径，并固定摘要超预算结果')
+
   assert.equal(files.length, 1)
   assert.match(files[0], /^audit-\d{4}-\d{2}-\d{2}\.jsonl$/)
   pass(`审计文件按天分片写入 ${auditDir}：${files[0]}`)
 
   const limited = await audit.tail(1)
   assert.equal(limited.length, 1)
-  assert.equal(limited[0].tool, 'file_trash')
+  assert.equal(limited[0].tool, 'long_error')
   pass('tail(limit) 返回最后 limit 条')
+
+  const oversizedTailPath = join(auditDir, files[0])
+  const recentRows = Array.from({ length: 20_005 }, (_, index) => JSON.stringify({
+    ts: Date.now() + index,
+    origin: 'command',
+    tool: `tail_budget_${index}`,
+    allowed: true
+  }))
+  await writeFile(oversizedTailPath, Buffer.concat([
+    Buffer.alloc(5 * 1024 * 1024, 0x78),
+    Buffer.from(`\n${recentRows.join('\n')}\n`)
+  ]))
+  const bounded = await audit.tail(-1)
+  assert.equal(bounded.length, 20_000)
+  assert.equal(bounded.at(-1)?.tool, 'tail_budget_20004')
+  assert.equal(bounded[0].tool, 'tail_budget_5')
+  pass('tail 反向分块读取超 4 MiB 文件，并将返回行数限制为最近 20,000 条')
 
   const missingDir = join(outDir, 'audit-missing', 'nested')
   await rm(join(outDir, 'audit-missing'), { recursive: true, force: true })

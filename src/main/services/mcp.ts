@@ -6,7 +6,12 @@ import type { Context } from 'cordis'
 import { Service } from 'cordis'
 import type { z } from 'zod'
 import { MCP_ACCESS_LEVELS, isMcpAccess, type McpAccess } from './config'
+import { errorMessage } from './error-text'
 import { withTrace } from './trace-context'
+
+const MAX_MCP_REQUEST_BYTES = 16 * 1024 * 1024
+
+class McpRequestTooLargeError extends Error {}
 
 export interface McpToolResult {
   content: Array<
@@ -44,6 +49,12 @@ export const mcpError = (text: string): McpToolResult => ({
   content: [{ type: 'text', text }],
   isError: true
 })
+
+export { errorMessage } from './error-text'
+
+export function mcpErrorFrom(error: unknown, fallback = '操作失败'): McpToolResult {
+  return mcpError(errorMessage(error, fallback))
+}
 
 declare module 'cordis' {
   interface Context {
@@ -192,8 +203,8 @@ export class McpService extends Service {
     try {
       const body = await this.readBody(req)
       parsed = JSON.parse(body)
-    } catch {
-      res.writeHead(400).end()
+    } catch (error) {
+      res.writeHead(error instanceof McpRequestTooLargeError ? 413 : 400).end()
       return
     }
 
@@ -255,7 +266,7 @@ export class McpService extends Service {
             })
             return result
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err)
+            const message = errorMessage(err)
             this.ctx.emit('mcp/tool-call', {
               name,
               phase: 'end',
@@ -285,9 +296,36 @@ export class McpService extends Service {
   private readBody(req: IncomingMessage): Promise<string> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = []
-      req.on('data', (chunk: Buffer) => chunks.push(chunk))
-      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-      req.on('error', reject)
+      const declaredLength = Number(req.headers['content-length'])
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_MCP_REQUEST_BYTES) {
+        req.resume()
+        reject(new McpRequestTooLargeError('MCP 请求体超过 16 MiB'))
+        return
+      }
+      let totalBytes = 0
+      let settled = false
+      req.on('data', (chunk: Buffer) => {
+        if (settled) return
+        totalBytes += chunk.length
+        if (totalBytes > MAX_MCP_REQUEST_BYTES) {
+          settled = true
+          chunks.length = 0
+          req.resume()
+          reject(new McpRequestTooLargeError('MCP 请求体超过 16 MiB'))
+          return
+        }
+        chunks.push(chunk)
+      })
+      req.on('end', () => {
+        if (settled) return
+        settled = true
+        resolve(Buffer.concat(chunks, totalBytes).toString('utf8'))
+      })
+      req.on('error', (error) => {
+        if (settled) return
+        settled = true
+        reject(error)
+      })
     })
   }
 }

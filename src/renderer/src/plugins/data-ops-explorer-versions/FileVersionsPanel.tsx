@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ReactElement } from 'react'
 import { Archive, GitBranch, History, RotateCcw, Save, ShieldCheck } from 'lucide-react'
 import { mutateVersion, VersionActionCancelled } from './version-actions'
-import { call, getService, useUiKit, type SelectionSnapshot, type SelectionService } from '../../workbench/sdk'
+import { versionEntriesSchema, versionGraphSchema, versionJobDoneSchema, versionPreviewSchema, versionStateSchema, versionsChangedSchema } from './schemas'
+import { callValidated, errorText, getService, useUiKit, type SelectionSnapshot, type SelectionService } from '../../workbench/sdk'
 
 interface VersionEntry {
   versionId: string
@@ -21,9 +22,9 @@ interface VersionState {
   synchronizationError?: string | null
   status: 'unversioned' | 'saved' | 'matches_saved_version' | 'modified' | 'interrupted_restore' | 'unknown' | 'unavailable'
   currentVersionId: string | null
-  currentTitle: string | null
+  currentTitle?: string | null
   matchingVersionId: string | null
-  matchingTitle: string | null
+  matchingTitle?: string | null
   pendingRestore?: {
     pending: boolean
     sourcePath: string | null
@@ -46,7 +47,7 @@ interface Branch {
   revisions: VersionEntry[]
 }
 interface VersionGraph { branches: Branch[]; graphState: string; pendingMerge: { sourceBranch: string; targetBranch: string; conflictFiles: string[]; targetBaseRevisionId: string } | null }
-interface JobDone { id: string; state: 'done' | 'failed' | 'canceled'; error?: string }
+type JobDone = ReturnType<typeof versionJobDoneSchema.parse>
 const emptySelection: SelectionSnapshot = { path: null, entries: [], selected: [] }
 const emptySubscribe = (): (() => void) => () => {}
 const branchActionNames: Record<string, string> = {
@@ -57,7 +58,11 @@ function statusCopy(state: VersionState | null): { label: string; tone: string; 
   if (!state) return { label: '读取中', tone: 'text-[var(--ds-text-subtle)]', detail: '正在检查文件版本状态' }
   if (state.status === 'interrupted_restore') {
     const pending = state.pendingRestore
-    if (!pending?.sourceAvailable) return { label: '恢复中断', tone: 'text-[var(--ds-status-danger)] dark:text-[var(--ds-status-danger)]', detail: pending?.diagnostic ?? '原文件暂不可访问；恢复记录仍保留' }
+    if (!pending?.sourceAvailable) return {
+      label: '恢复中断',
+      tone: 'text-[var(--ds-status-danger)] dark:text-[var(--ds-status-danger)]',
+      detail: pending?.diagnostic ? errorText(pending.diagnostic, '原文件暂不可访问；恢复记录仍保留') : '原文件暂不可访问；恢复记录仍保留'
+    }
     if (pending.sameSourceBytes) return { label: '恢复中断', tone: 'text-[var(--ds-status-warning)] dark:text-[var(--ds-status-warning)]', detail: '原文件字节未变化，可以继续完成该版本恢复' }
     if (pending.sourceIsTarget) return { label: '恢复待收尾', tone: 'text-[var(--ds-status-info)]', detail: '原文件已匹配目标版本，可以继续完成恢复记录清理' }
     return { label: '恢复中断', tone: 'text-[var(--ds-status-danger)] dark:text-[var(--ds-status-danger)]', detail: '检测到原文件在恢复期间被改写；可解除阻塞并保留当前文件' }
@@ -119,16 +124,16 @@ export function FileVersionsPanel(): ReactElement {
     setBusy(true); setError('')
     try {
       const [listResult, stateResult] = await Promise.all([
-        call<VersionEntry[]>('versions', 'list', requestedPath),
-        call<VersionState>('versions', 'state', requestedPath)
+        callValidated(versionEntriesSchema, 'versions', 'list', requestedPath),
+        callValidated(versionStateSchema, 'versions', 'state', requestedPath)
       ])
       if (refreshSequence.current !== request || pathRef.current !== requestedPath) return
       let graphResult: VersionGraph | null = null
       let graphError = ''
       try {
-        graphResult = await call<VersionGraph>('versions', 'branchGraph', requestedPath, true)
+        graphResult = await callValidated(versionGraphSchema, 'versions', 'branchGraph', requestedPath, true)
       } catch (cause) {
-        graphError = cause instanceof Error ? cause.message : '无法读取 Lore 分支状态'
+        graphError = errorText(cause, '无法读取 Lore 分支状态')
       }
       if (refreshSequence.current !== request || pathRef.current !== requestedPath) return
       const merged = new Map<string, VersionEntry>()
@@ -154,7 +159,7 @@ export function FileVersionsPanel(): ReactElement {
       if (graphError) setError(`版本时间线已加载；${graphError}`)
     } catch (cause) {
       if (refreshSequence.current !== request || pathRef.current !== requestedPath) return
-      setError(cause instanceof Error ? cause.message : '无法读取 Lore 历史')
+      setError(errorText(cause, '无法读取 Lore 历史'))
     } finally {
       if (refreshSequence.current === request && pathRef.current === requestedPath) setBusy(false)
       refreshRunning.current -= 1
@@ -180,11 +185,11 @@ export function FileVersionsPanel(): ReactElement {
     if (!requestedPath) return
     const request = ++stateRefreshSequence.current
     try {
-      const next = await call<VersionState>('versions', 'state', requestedPath)
+      const next = await callValidated(versionStateSchema, 'versions', 'state', requestedPath)
       if (stateRefreshSequence.current === request && pathRef.current === requestedPath) setState(next)
     } catch (cause) {
       if (stateRefreshSequence.current === request && pathRef.current === requestedPath) {
-        setError(cause instanceof Error ? cause.message : '无法读取文件版本状态')
+        setError(errorText(cause, '无法读取文件版本状态'))
       }
     }
   }, [path])
@@ -239,7 +244,7 @@ export function FileVersionsPanel(): ReactElement {
       if (cached) return [entry.versionId, cached]
       let request = previewRequests.current.get(key)
       if (!request) {
-        request = call<string | null>('versions', 'preview', requestedPath, entry.versionId)
+        request = callValidated(versionPreviewSchema, 'versions', 'preview', requestedPath, entry.versionId)
           .then((preview) => {
             if (preview) previewCache.current.set(key, preview)
             return preview
@@ -272,13 +277,16 @@ export function FileVersionsPanel(): ReactElement {
   }, [scheduleRefresh])
   useEffect(() => window.bridge.onEvent((channel, payload) => {
     if (channel === 'versions:changed') {
-      if (!payload || typeof payload !== 'object' || !('path' in payload) || (payload as { path?: unknown }).path !== path) return
-      if ('kind' in payload && (payload as { kind?: unknown }).kind === 'source') scheduleStateRefresh()
+      const decoded = versionsChangedSchema.safeParse(payload)
+      if (!decoded.success || decoded.data.path !== path) return
+      if (decoded.data.kind === 'source') scheduleStateRefresh()
       else scheduleRefresh()
       return
     }
-    if (channel === 'job:done' && payload && typeof payload === 'object' && 'id' in payload) {
-      const job = payload as JobDone
+    if (channel === 'job:done') {
+      const decoded = versionJobDoneSchema.safeParse(payload)
+      if (!decoded.success) return
+      const job = decoded.data
       completedJobs.current.set(job.id, { id: job.id, state: job.state, error: job.error })
       while (completedJobs.current.size > 50) completedJobs.current.delete(completedJobs.current.keys().next().value!)
       const current = activeJob.current
@@ -308,7 +316,7 @@ export function FileVersionsPanel(): ReactElement {
       if (pathRef.current !== requestedPath) return
       setTitle('')
       setNotice(`版本保存任务已提交（${result.jobId}）；完成后会自动刷新历史`)
-    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法创建版本') }
+    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(errorText(cause, '无法创建版本')) }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
@@ -326,7 +334,7 @@ export function FileVersionsPanel(): ReactElement {
       trackJob(result.jobId, requestedPath)
       if (pathRef.current !== requestedPath) return
       setNotice(`恢复任务已提交（${result.jobId}）；完成后 Explorer 会刷新文件信息`)
-    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法恢复版本') }
+    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(errorText(cause, '无法恢复版本')) }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
@@ -337,7 +345,7 @@ export function FileVersionsPanel(): ReactElement {
     try {
       await mutateVersion('reconcile', [requestedPath, true], '同步版本信息？此操作不会修改原文件。')
       if (pathRef.current === requestedPath) await refresh()
-    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '版本信息同步失败') }
+    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(errorText(cause, '版本信息同步失败')) }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
@@ -352,7 +360,7 @@ export function FileVersionsPanel(): ReactElement {
       if (pathRef.current !== requestedPath) return
       await refresh()
       if (pathRef.current === requestedPath) setNotice('已解除恢复阻塞，当前文件内容与 Lore 历史均已保留')
-    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : '无法解除中断恢复') }
+    } catch (cause) { if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(errorText(cause, '无法解除中断恢复')) }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
@@ -365,7 +373,7 @@ export function FileVersionsPanel(): ReactElement {
       trackJob(result.jobId, requestedPath)
       if (pathRef.current === requestedPath) setNotice(`${branchActionNames[action]}任务已提交${result.jobId ? `（${result.jobId}）` : ''}`)
     } catch (cause) {
-      if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(cause instanceof Error ? cause.message : `${branchActionNames[action]}失败`)
+      if (!(cause instanceof VersionActionCancelled) && pathRef.current === requestedPath) setError(errorText(cause, `${branchActionNames[action]}失败`))
     }
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
@@ -405,7 +413,7 @@ export function FileVersionsPanel(): ReactElement {
     </section>
 
     {(state?.status === 'unknown' || state?.operation || state?.synchronizationError) && <div className="rounded-md border border-[var(--ds-status-warning)]/35 bg-[var(--ds-status-warning-soft)] p-2 text-[var(--ds-status-warning)]">
-      <span>{state.synchronizationError ? `版本信息同步失败：${state.synchronizationError}` : state.operation ? '版本操作状态待确认' : '现有版本信息需要同步'}</span>
+      <span>{state.synchronizationError ? `版本信息同步失败：${errorText(state.synchronizationError, '版本信息同步失败')}` : state.operation ? '版本操作状态待确认' : '现有版本信息需要同步'}</span>
       <DesktopButton disabled={busy} onClick={() => void reconcileMetadata()}>同步版本信息</DesktopButton>
     </div>}
     {error && <div role="alert" className="rounded-md border border-[var(--ds-status-danger)]/35 bg-[var(--ds-status-danger-soft)] px-2.5 py-2 text-[var(--ds-status-danger)] dark:border-[var(--ds-status-danger)]/35 dark:bg-[var(--ds-status-danger-soft)] dark:text-[var(--ds-status-danger)]">{error}</div>}
@@ -413,7 +421,7 @@ export function FileVersionsPanel(): ReactElement {
 
     {pendingRestore && <section role="alert" className="rounded-[var(--ds-radius-control)] border border-[var(--ds-status-warning)]/35 bg-[var(--ds-status-warning-soft)] p-2.5">
       <div className="flex items-center gap-1.5 font-semibold text-[var(--ds-status-warning)]"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--ds-status-warning)] text-xs text-white">!</span>检测到恢复中断</div>
-      <div className="mt-1 text-xs leading-relaxed text-[var(--ds-status-warning)]/80">目标版本：{pendingRestoreEntry?.title ?? pendingRestore.versionId}{!pendingRestore.sourceAvailable && pendingRestore.diagnostic ? ` · ${pendingRestore.diagnostic}` : ''}</div>
+      <div className="mt-1 text-xs leading-relaxed text-[var(--ds-status-warning)]/80">目标版本：{pendingRestoreEntry?.title ?? pendingRestore.versionId}{!pendingRestore.sourceAvailable && pendingRestore.diagnostic ? ` · ${errorText(pendingRestore.diagnostic, '原文件暂不可访问')}` : ''}</div>
       <div className="mt-2 grid grid-cols-2 gap-1.5">
         <div className="rounded-md border border-[var(--ds-accent)]/30 bg-[var(--ds-surface-raised)] p-1.5 dark:border-[var(--ds-accent-strong)]/40 dark:bg-[var(--ds-surface-raised)]/80"><DesktopButton size="xs" variant="primary" disabled={busy || !canContinueRestore || !pendingRestoreEntry} onClick={() => pendingRestoreEntry && void restore(pendingRestoreEntry, true)}>{pendingRestore?.sourceIsTarget ? '完成恢复' : '继续恢复'}</DesktopButton><div className="mt-1 text-xs leading-relaxed text-[var(--ds-text-muted)] dark:text-[var(--ds-text-subtle)]">{pendingRestore.sameSourceBytes ? '原始字节未变，可安全继续。' : pendingRestore.sourceIsTarget ? '文件已匹配目标版本，只清理恢复记录。' : '仅在原文件未变或已等于目标版本时启用。'}</div></div>
         <div className="rounded-md border border-[var(--ds-border)] bg-[var(--ds-surface-raised)] p-1.5 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]/80"><DesktopButton size="xs" variant="subtle" disabled={busy || !canAbandonRestore} onClick={() => void abandonInterruptedRestore()}>保留当前文件</DesktopButton><div className="mt-1 text-xs leading-relaxed text-[var(--ds-text-muted)] dark:text-[var(--ds-text-subtle)]">{canAbandonRestore ? '解除阻塞只清除恢复记录，不覆盖文件。' : '仅在检测到外部改写且未匹配目标时启用。'}</div></div>

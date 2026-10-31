@@ -1,5 +1,6 @@
-import { call } from '../../workbench/sdk'
+import { callValidated } from '../../workbench/sdk'
 import type { ILeaferImage } from 'leafer-ui'
+import { forgetResultSchema, resourceBytesSchema, resourceInfoSchema, resourceListSchema, resourceTextSchema } from './schemas'
 
 export interface ResourceInfo {
   id: string; path: string; name: string; extension: string; registeredAt: number
@@ -14,14 +15,14 @@ const images = new Map<string, { refs: number; promise: Promise<ILeaferImage> }>
 const leases = new Map<string, { key: string; image: ILeaferImage }>()
 
 export const resources = {
-  register: (path: string): Promise<ResourceInfo> => call('resources', 'register', path),
-  registerFile: (file: File): Promise<ResourceInfo> => call('resources', 'register', file),
-  resolve: (reference: string): Promise<ResourceInfo> => call('resources', 'resolve', reference),
-  list: (): Promise<ResourceInfo[]> => call('resources', 'list'),
-  choose: (): Promise<ResourceInfo[]> => call('resources', 'choose'),
-  forget: (reference: string): Promise<boolean> => call('resources', 'forget', reference),
-  read: (reference: string, offset = 0, length = 65536): Promise<{ id: string; revision: string; offset: number; total: number; base64: string; eof: boolean }> => call('resources', 'read', reference, offset, length),
-  readText: (reference: string): Promise<{ resource: ResourceInfo; text: string }> => call('resources', 'readText', reference),
+  register: (path: string): Promise<ResourceInfo> => callValidated(resourceInfoSchema, 'resources', 'register', path),
+  registerFile: (file: File): Promise<ResourceInfo> => callValidated(resourceInfoSchema, 'resources', 'register', file),
+  resolve: (reference: string): Promise<ResourceInfo> => callValidated(resourceInfoSchema, 'resources', 'resolve', reference),
+  list: (): Promise<ResourceInfo[]> => callValidated(resourceListSchema, 'resources', 'list'),
+  choose: (): Promise<ResourceInfo[]> => callValidated(resourceListSchema, 'resources', 'choose'),
+  forget: (reference: string): Promise<boolean> => callValidated(forgetResultSchema, 'resources', 'forget', reference),
+  read: (reference: string, offset = 0, length = 65536): Promise<{ id: string; revision: string; offset: number; total: number; base64: string; eof: boolean }> => callValidated(resourceBytesSchema, 'resources', 'read', reference, offset, length),
+  readText: (reference: string): Promise<{ resource: ResourceInfo; text: string }> => callValidated(resourceTextSchema, 'resources', 'readText', reference),
   async acquireImage(reference: string): Promise<ImageLease> {
     const resource = await resources.resolve(reference)
     if (!resource.available || resource.kind !== 'image') throw new Error('资源不是可用的图片')

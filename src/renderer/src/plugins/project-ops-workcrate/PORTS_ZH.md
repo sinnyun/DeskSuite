@@ -26,7 +26,7 @@
 
 - Projects：`list(includeArchived?)`、`get(projectId)`、`create(name)`、`delete(projectId)`、`relocateProject({projectId,directory})`、`getDocumentPath(projectId)`。
 - Boards：`boardCatalog(projectId)`、`preview(projectId,boardId)`、`createProjectDocument({projectId,directory})`、`createPage(projectId)`、`refresh(projectId)`、`openInVectorCraft(projectId)`、`openProjectFolder(projectId)`。
-- 事件：监听 `workcrate:boards-changed`、`workcrateProjects:changed` 并更新当前界面数据；收到 MCP 请求广播的 `workcrate:panel-open` 时打开浮动面板。
+- 事件：监听 `workcrate:boards-changed`、`workcrate:sync-error`、`workcrate:sync-recovered`、`workcrateProjects:changed` 并更新界面数据或同步状态；收到 MCP 请求广播的 `workcrate:panel-open` 时打开浮动面板。
 
 ## 边界
 
@@ -35,10 +35,11 @@
 - WorkCrate 物料栏是插件支持的编辑范围；字段变更由 Boards 适配器通过官方 CLI 写入原生文档。画面内容编辑仍在 VectorCraft 中完成。
 - 渲染层仅通过 SDK 调用 `window.bridge`，不 import Electron 或其他插件。
 - 不导入旧程序的项目、文档或版本数据。
+- 工程列表/快照、画板目录、预置、VectorCraft 配置、PNG 预览、快速创建和导出结果在进入界面状态前均经插件本地 Zod schema 解码。PNG data URL 限制为 45 MB，对应主进程 32 MiB 源文件上限及 base64 膨胀。
 
 ## 刷新与页面导航
 
-页签为“项目管理 / 页面管理 / 页面编辑”。画板变化事件只更新数据与预览，保持当前视图和选中画板；相同 ID 的缩略图也会重新读取。页面编辑工具栏支持新增画板，左侧缩略图支持拖动排序；放下时把完整画板 ID 列表交给 `workcrateBoards.reorderPages` 保存原生顺序。`workcrate:sync-error` 显示错误但不跳转。`workcrate:panel-open` 支持可选 projectId/boardId，供 MCP 导航。
+页签为“项目管理 / 页面管理 / 页面编辑”。画板变化事件只更新数据与预览，保持当前视图和选中画板；相同 ID 的缩略图也会重新读取。页面编辑工具栏支持新增画板，左侧缩略图支持拖动排序；放下时把完整画板 ID 列表交给 `workcrateBoards.reorderPages` 保存原生顺序。`workcrate:sync-error` 显示错误但不跳转；renderer 可见错误经共享错误文本 helper 限长并遮蔽凭据/本机路径，同时保留中文 fallback。`workcrate:panel-open` 经严格对象 schema 解码，可包含工程 UUID、画板 ID、设置分区、快速创建标记/表格和时间戳。快速创建表格最多 30 列、200 行，单元格不超过 1,024 字符；非法请求会忽略并显示中文提示。
 
 ## 基础信息界面
 
@@ -47,6 +48,8 @@
 通过 Projects IPC `getProgramPresets/saveProgramPresets/effectivePresets` 读写基础信息，监听 `workcrateProjects:changed` 更新选项。仅在活动画板/物料实际变化时重置物料草稿，预览更新不会清掉输入。成功、进度和错误提示统一位于面板底部；内容独立滚动。
 
 收到 `workcrate:sync-recovered` 时清除对应工程的过期自动同步错误，不改变当前页面。
+
+画板更新通知要求工程 UUID 和整数时间戳（可带来源工程 UUID）；同步错误要求工程 UUID 和 1–4,096 字符错误消息；恢复通知要求工程 UUID；`workcrateProjects:changed` 要求可空工程 UUID、正整数修订号和整数时间戳。非法事件会忽略并显示简短中文提示。
 
 ## 页面管理选择与导出
 
@@ -57,4 +60,4 @@
 
 ## 快速创建视图
 
-内部组件 `QuickCreate.tsx` 由项目创建后的页面管理“快速创建”入口打开。支持 Excel/WPS 粘贴、CSV 解析、表格逐格编辑、增删行、有效行数预览和复用初始画板。仅通过 bridge 调用 `workcrateBoards.previewQuickCreate` 与 `quickCreate`。成功返回更新后的页面矩阵，失败保留草稿。`workcrate:panel-open` 可带 `quickCreate: true` 和解析后的 `table`，供 MCP 打开和验收。保持面板尺寸及内部滚动，文案中文。
+内部组件 `QuickCreate.tsx` 由项目创建后的页面管理“快速创建”入口打开。支持 Excel/WPS 粘贴、CSV 解析、表格逐格编辑、增删行、有效行数预览和复用初始画板。仅通过 bridge 调用 `workcrateBoards.previewQuickCreate` 与 `quickCreate`。成功返回更新后的页面矩阵，失败保留草稿并显示限长、遮蔽凭据和本机路径后的错误。`workcrate:panel-open` 可带 `quickCreate: true` 和解析后的 `table`，供 MCP 打开和验收。保持面板尺寸及内部滚动，文案中文。

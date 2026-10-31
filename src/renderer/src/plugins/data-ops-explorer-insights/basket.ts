@@ -1,47 +1,54 @@
-import { useSyncExternalStore } from 'react'
+import { createStore } from 'zustand/vanilla'
+import { useStore } from 'zustand'
 import type { BasketItem, BasketService, SelectionItem } from '../../workbench/sdk'
-import { call, log } from '../../workbench/sdk'
+import { callValidated, errorText, log } from '../../workbench/sdk'
+import { basketItemsSchema } from './basket-schema'
+
+interface BasketState {
+  items: BasketItem[]
+}
+
+const store = createStore<BasketState>(() => ({ items: [] }))
 
 class BasketStore implements BasketService {
-  private items: BasketItem[] = []
-  private listeners = new Set<() => void>()
   private queue: Promise<unknown> = Promise.resolve()
 
-  list = (): BasketItem[] => this.items
+  list = (): BasketItem[] => store.getState().items
 
-  getSnapshot = (): BasketItem[] => this.items
+  getSnapshot = (): BasketItem[] => store.getState().items
 
   subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+    return store.subscribe(listener)
   }
 
-  add = (items: SelectionItem[]): void => {
-    const existing = new Set(this.items.map((item) => item.path))
-    const incoming = items.filter((item) => !existing.has(item.path))
+  add = (incomingItems: SelectionItem[]): void => {
+    const current = store.getState().items
+    const existing = new Set(current.map((item) => item.path))
+    const incoming = incomingItems.filter((item) => !existing.has(item.path))
     if (incoming.length === 0) return
     const addedAt = Date.now()
-    this.commit([...incoming.map((item) => ({ ...item, addedAt })), ...this.items])
-    this.persist(() => call<BasketItem[]>('basket', 'add', incoming))
+    this.commit([...incoming.map((item) => ({ ...item, addedAt })), ...current])
+    this.persist(() => callValidated(basketItemsSchema, 'basket', 'add', incoming))
   }
 
   remove = (path: string): void => {
-    if (!this.items.some((item) => item.path === path)) return
-    this.commit(this.items.filter((item) => item.path !== path))
-    this.persist(() => call<BasketItem[]>('basket', 'remove', path))
+    const items = store.getState().items
+    if (!items.some((item) => item.path === path)) return
+    this.commit(items.filter((item) => item.path !== path))
+    this.persist(() => callValidated(basketItemsSchema, 'basket', 'remove', path))
   }
 
   clear = (): void => {
-    if (this.items.length === 0) return
+    if (store.getState().items.length === 0) return
     this.commit([])
-    this.persist(() => call<BasketItem[]>('basket', 'clear'))
+    this.persist(() => callValidated(basketItemsSchema, 'basket', 'clear'))
   }
 
   hydrate = async (): Promise<void> => {
     try {
-      this.commit(await call<BasketItem[]>('basket', 'list'))
+      this.commit(await callValidated(basketItemsSchema, 'basket', 'list'))
     } catch (error) {
-      log('error', 'Basket', '暂存篮读取失败，本次会话不会持久化', { error: String(error) })
+      log('error', 'Basket', '暂存篮读取失败，本次会话不会持久化', { error: errorText(error, '暂存篮读取失败') })
     }
   }
 
@@ -51,13 +58,12 @@ class BasketStore implements BasketService {
       .then(op)
       .then((next) => this.commit(next))
       .catch((error: unknown) => {
-        log('error', 'Basket', '暂存篮保存失败', { error: String(error) })
+        log('error', 'Basket', '暂存篮保存失败', { error: errorText(error, '暂存篮保存失败') })
       })
   }
 
   private commit(items: BasketItem[]): void {
-    this.items = items
-    for (const listener of this.listeners) listener()
+    store.setState({ items })
   }
 }
 
@@ -66,5 +72,5 @@ export const basketStore = new BasketStore()
 void basketStore.hydrate()
 
 export function useBasket(): BasketItem[] {
-  return useSyncExternalStore(basketStore.subscribe, basketStore.getSnapshot)
+  return useStore(store, (state) => state.items)
 }

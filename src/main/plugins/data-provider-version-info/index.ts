@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto'
 import type { Context, Plugin } from 'cordis'
 import type { SQLOutputValue } from 'node:sqlite'
 import { identity, normalize } from '../../services/paths'
+import {
+  assertVersionListBudget, parseGraphJson, parseParentsJson, parseSnapshotJson, serializeGraph, serializeParentsJson, serializeSnapshot,
+  VERSION_JSON_LIMITS, versionRecordSchema
+} from './codec'
 
 export interface VersionEntity {
   entityId: string
@@ -90,7 +94,8 @@ interface VersionRow extends Record<string, SqlValue> {
   entity_id: string
   version_id: string
   revision_number: number
-  parents_json: string
+  parents_json: string | null
+  parents_bytes: number
   title: string
   created_at: string
   size_bytes: number
@@ -100,8 +105,10 @@ interface VersionRow extends Record<string, SqlValue> {
 }
 interface GraphRow extends Record<string, SqlValue> {
   graph_state: string
-  branches_json: string
+  branches_json: string | null
+  branches_bytes: number
   pending_merge_json: string | null
+  pending_merge_bytes: number | null
 }
 
 const PLUGIN_ID = 'data-provider-version-info'
@@ -163,22 +170,21 @@ function toEntity(row: EntityRow): VersionEntity {
 }
 
 function toRecord(row: VersionRow): VersionRecord {
-  const parentRevisionIds: unknown = JSON.parse(row.parents_json)
-  if (!Array.isArray(parentRevisionIds) || parentRevisionIds.some((id) => typeof id !== 'string')) {
-    throw new Error(`版本 ${row.version_id} 的父版本元数据无效`)
+  if (row.parents_json === null || row.parents_bytes > VERSION_JSON_LIMITS.parentsBytes) {
+    throw new Error(`版本 ${row.version_id} 的父版本元数据超过 256 KiB 限额`)
   }
-  return {
+  return versionRecordSchema.parse({
     entityId: row.entity_id,
     versionId: row.version_id,
     revisionNumber: row.revision_number,
-    parentRevisionIds,
+    parentRevisionIds: parseParentsJson(row.parents_json),
     title: row.title,
     createdAt: row.created_at,
     sizeBytes: row.size_bytes,
     contentType: row.content_type,
     thumbnailPath: row.thumbnail_path,
     isCurrent: row.is_current === 1
-  }
+  })
 }
 
 function requireEntity(db: Context['db'], entityId: string): void {
@@ -247,16 +253,25 @@ const versionInfoPlugin: Plugin = {
       entities: () => context.db.all<EntityRow>('SELECT entity_id, path_key, path FROM version_entities').map(toEntity),
       snapshot(entityId) {
         requireEntity(context.db, entityId)
-        const row = context.db.get<{ snapshot_json: string }>('SELECT snapshot_json FROM version_snapshots WHERE entity_id = ?', entityId)
-        return row ? JSON.parse(row.snapshot_json) as VersionSnapshot : {
+        const row = context.db.get<{ snapshot_json: string | null; snapshot_bytes: number }>(
+          `SELECT CASE WHEN length(CAST(snapshot_json AS BLOB)) <= ? THEN snapshot_json ELSE NULL END AS snapshot_json,
+                  length(CAST(snapshot_json AS BLOB)) AS snapshot_bytes
+             FROM version_snapshots WHERE entity_id = ?`,
+          VERSION_JSON_LIMITS.snapshotBytes, entityId
+        )
+        if (row && (row.snapshot_json === null || row.snapshot_bytes > VERSION_JSON_LIMITS.snapshotBytes)) {
+          throw new Error(`版本实体 ${entityId} 的快照超过 8 MiB 限额`)
+        }
+        return row ? parseSnapshotJson(row.snapshot_json!) : {
           state: { status: 'unknown' }, fingerprints: {}, synchronizedAt: null, operation: null, error: null
         }
       },
       putSnapshot(entityId, snapshot) {
+        const encoded = serializeSnapshot(snapshot)
         requireEntity(context.db, entityId)
         context.db.run(`INSERT INTO version_snapshots(entity_id, snapshot_json, updated_at) VALUES (?, ?, ?)
           ON CONFLICT(entity_id) DO UPDATE SET snapshot_json=excluded.snapshot_json, updated_at=excluded.updated_at`,
-        entityId, JSON.stringify(snapshot), Date.now())
+        entityId, encoded, Date.now())
       },
       getOrCreateEntity(path) {
         const pair = pathPair(path)
@@ -312,13 +327,29 @@ const versionInfoPlugin: Plugin = {
 
       list(entityId) {
         requireEntity(context.db, entityId)
-        return context.db.all<VersionRow>(
-          `SELECT entity_id, version_id, revision_number, parents_json, title, created_at,
-                  size_bytes, content_type, thumbnail_path, is_current
-             FROM versions WHERE entity_id = ?
-             ORDER BY revision_number DESC, created_at DESC, version_id`,
+        const budget = context.db.get<{ version_count: number; text_bytes: number }>(
+          `SELECT COUNT(*) AS version_count,
+                  COALESCE(SUM(
+                    length(CAST(entity_id AS BLOB)) + length(CAST(version_id AS BLOB)) +
+                    length(CAST(parents_json AS BLOB)) + length(CAST(title AS BLOB)) +
+                    length(CAST(created_at AS BLOB)) + COALESCE(length(CAST(content_type AS BLOB)), 0) +
+                    COALESCE(length(CAST(thumbnail_path AS BLOB)), 0)
+                  ), 0) AS text_bytes
+             FROM versions WHERE entity_id = ?`,
           entityId
-        ).map(toRecord)
+        )
+        assertVersionListBudget(budget?.version_count ?? 0, budget?.text_bytes ?? 0, entityId)
+        const rows = context.db.all<VersionRow>(
+          `SELECT entity_id, version_id, revision_number,
+                  CASE WHEN length(CAST(parents_json AS BLOB)) <= ? THEN parents_json ELSE NULL END AS parents_json,
+                  length(CAST(parents_json AS BLOB)) AS parents_bytes,
+                  title, created_at, size_bytes, content_type, thumbnail_path, is_current
+             FROM versions WHERE entity_id = ?
+             ORDER BY revision_number DESC, created_at DESC, version_id LIMIT ?`,
+          VERSION_JSON_LIMITS.parentsBytes, entityId, VERSION_JSON_LIMITS.versionsPerEntity + 1
+        )
+        assertVersionListBudget(rows.length, 0, entityId)
+        return rows.map(toRecord)
       },
 
       save(record) {
@@ -344,7 +375,7 @@ const versionInfoPlugin: Plugin = {
             record.entityId,
             record.versionId,
             record.revisionNumber,
-            JSON.stringify(record.parentRevisionIds),
+            serializeParentsJson(record.parentRevisionIds),
             record.title,
             record.createdAt,
             record.sizeBytes,
@@ -370,17 +401,35 @@ const versionInfoPlugin: Plugin = {
       graph(entityId) {
         requireEntity(context.db, entityId)
         const row = context.db.get<GraphRow>(
-          'SELECT graph_state, branches_json, pending_merge_json FROM version_graph WHERE entity_id = ?', entityId
+          `SELECT graph_state,
+                  CASE WHEN length(CAST(branches_json AS BLOB)) <= ? THEN branches_json ELSE NULL END AS branches_json,
+                  length(CAST(branches_json AS BLOB)) AS branches_bytes,
+                  CASE WHEN pending_merge_json IS NULL OR length(CAST(pending_merge_json AS BLOB)) <= ? THEN pending_merge_json ELSE NULL END AS pending_merge_json,
+                  CASE WHEN pending_merge_json IS NULL THEN NULL ELSE length(CAST(pending_merge_json AS BLOB)) END AS pending_merge_bytes
+             FROM version_graph WHERE entity_id = ?`,
+          VERSION_JSON_LIMITS.graphBytes, VERSION_JSON_LIMITS.pendingMergeBytes, entityId
         )
         if (!row) return { branches: [], graphState: 'empty', pendingMerge: null }
-        const branches: unknown = JSON.parse(row.branches_json)
-        const pendingMerge: unknown = row.pending_merge_json === null ? null : JSON.parse(row.pending_merge_json)
-        if (!Array.isArray(branches)) throw new Error(`文件 ${entityId} 的版本分支图损坏`)
-        return { branches: branches as VersionBranch[], graphState: row.graph_state, pendingMerge: pendingMerge as PendingVersionMerge | null }
+        try {
+          if (row.branches_json === null || row.branches_bytes > VERSION_JSON_LIMITS.graphBytes) throw new Error('版本分支图超过 16 MiB 限额')
+          if (row.pending_merge_bytes !== null && row.pending_merge_bytes > VERSION_JSON_LIMITS.pendingMergeBytes) throw new Error('待解决合并数据超过 2 MiB 限额')
+          const parsed = parseGraphJson(row.graph_state, row.branches_json, row.pending_merge_json)
+          if (parsed.branches.some((branch) => branch.revisions.some((record) => record.entityId !== entityId))) {
+            throw new Error('版本分支包含其他文件的历史')
+          }
+          return parsed
+        } catch (error) {
+          throw new Error(`文件 ${entityId} 的版本分支图损坏`, { cause: error })
+        }
       },
 
       putGraph(entityId, graph) {
-        validateGraph(entityId, graph)
+        const encoded = serializeGraph(graph)
+        const parsed = parseGraphJson(encoded.graphState, encoded.branchesJson, encoded.pendingMergeJson)
+        if (parsed.branches.some((branch) => branch.revisions.some((record) => record.entityId !== entityId))) {
+          throw new Error('分支图不能包含其他文件的版本')
+        }
+        validateGraph(entityId, parsed)
         requireEntity(context.db, entityId)
         context.db.run(
           `INSERT INTO version_graph(entity_id, graph_state, branches_json, pending_merge_json, updated_at)
@@ -389,9 +438,9 @@ const versionInfoPlugin: Plugin = {
              branches_json = excluded.branches_json, pending_merge_json = excluded.pending_merge_json,
              updated_at = excluded.updated_at`,
           entityId,
-          graph.graphState,
-          JSON.stringify(graph.branches),
-          graph.pendingMerge === null ? null : JSON.stringify(graph.pendingMerge),
+          encoded.graphState,
+          encoded.branchesJson,
+          encoded.pendingMergeJson,
           Date.now()
         )
       }

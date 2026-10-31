@@ -21,4 +21,6 @@ Consumes `ui` and `launcher.list(query?, offset?)`, `launcher.summary(query?)`, 
 `launcher.groups()`, `launcher.createGroup(name)`, `launcher.renameGroup(id, name)`, `launcher.deleteGroup(id)`,
 and `launcher.assignGroup(id, groupId?)`. The panel supports user categories and per-program classification.
 
+Renderer IPC results consumed by panel state are runtime-decoded with plugin-local Zod schemas: paged entries (maximum 250), groups (maximum 100), summary counts, and nullable image data URLs. Invalid responses are rejected and shown through the panel's normal error path; icon decode failures fall back to the generic icon.
+
 No MCP tools, events, or config keys are consumed.

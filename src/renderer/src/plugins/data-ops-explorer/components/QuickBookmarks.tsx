@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { ChevronDown, ChevronRight, Folder, MoreHorizontal, Pencil, Plus, X } from 'lucide-react'
-import { useUiKit } from '../../../workbench/sdk'
+import { errorText, useUiKit } from '../../../workbench/sdk'
 import { addSelectedBookmarks, bookmarkAction, openBookmark, type BookmarkGroup } from '../bookmarks'
-import { useExplorer } from '../store'
+import { useExplorerShallow } from '../store'
 
 type Editor = { groupId?: string; itemId?: string; name: string; path: string }
 
 export function QuickBookmarks(): ReactElement {
   const { DesktopButton, DesktopIconButton, DesktopInput } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({ entries: s.entries, selectedPaths: s.selectedPaths, path: s.path }))
   const [groups, setGroups] = useState<BookmarkGroup[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -21,12 +21,12 @@ export function QuickBookmarks(): ReactElement {
   const run = async (task: () => Promise<unknown>): Promise<void> => {
     setBusy(true)
     setError('')
-    try { await task() } catch (error) { setError(error instanceof Error ? error.message : String(error)) }
+    try { await task() } catch (error) { setError(errorText(error, '收藏操作失败')) }
     finally { setBusy(false) }
   }
   useEffect(() => {
     let alive = true
-    const refresh = (): void => { void bookmarkAction({ action: 'list' }).then((value) => { if (alive) setGroups(value) }).catch((error) => { if (alive) setError(String(error)) }) }
+    const refresh = (): void => { void bookmarkAction({ action: 'list' }).then((value) => { if (alive) setGroups(value) }).catch((error) => { if (alive) setError(errorText(error, '无法读取快速收藏')) }) }
     const stop = window.bridge.onEvent((channel) => { if (channel === 'quickBookmarks:changed') refresh() })
     refresh()
     return () => { alive = false; stop() }

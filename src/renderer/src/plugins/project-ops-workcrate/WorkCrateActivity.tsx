@@ -1,10 +1,10 @@
 import { useEffect, type ReactElement } from 'react'
 import { FolderKanban } from 'lucide-react'
-import { useLayout, useUiKit } from '../../workbench/sdk'
+import { useLayoutShallow, useUiKit } from '../../workbench/sdk'
 
 export function WorkCrateActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel, openFloatingPanel: state.openFloatingPanel }))
   const active = floatingPanelOpen && activeFloatingPanel === 'workcrate'
     useEffect(() => window.bridge.onEvent((channel) => {
       if (channel === 'workcrate:panel-open') openFloatingPanel('workcrate')

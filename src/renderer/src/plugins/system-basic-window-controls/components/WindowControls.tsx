@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Copy, Minus, Square, X } from 'lucide-react'
-import { call, useBridge, useUiKit } from '../../../workbench/sdk'
+import { call, callValidated, useBridge, useUiKit } from '../../../workbench/sdk'
+import { windowStateSchema } from '../window-state-schema'
+import type { z } from 'zod'
 
-interface WindowState {
-  maximized: boolean
-  fullscreen: boolean
-  focused: boolean
-}
+type WindowState = z.infer<typeof windowStateSchema>
 
 function ControlButton({
   title,
@@ -39,11 +37,13 @@ export function WindowControls(): ReactElement {
   const [state, setState] = useState<WindowState>({ maximized: false, fullscreen: false, focused: true })
 
   useEffect(() => {
-    void call<WindowState>('windowControl', 'state')
+    void callValidated(windowStateSchema, 'windowControl', 'state')
       .then(setState)
       .catch(() => {})
     const off = bridge.onEvent((channel, payload) => {
-      if (channel === 'window:state') setState(payload as WindowState)
+      if (channel !== 'window:state') return
+      const parsed = windowStateSchema.safeParse(payload)
+      if (parsed.success) setState(parsed.data)
     })
     return off
   }, [bridge])

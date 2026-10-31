@@ -1,29 +1,47 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import type { ThemeMode } from './types'
+import { useStore } from 'zustand'
+import { createStore } from 'zustand/vanilla'
+import { z } from 'zod'
 
-interface ThemeContextValue {
+interface ThemeState {
   mode: ThemeMode
-  isDark: boolean
   setMode: (mode: ThemeMode) => void
-  toggleTheme: () => void
+  systemDark: boolean
+  setSystemDark: (isDark: boolean) => void
 }
 
 const STORAGE_KEY = 'desksuite.theme.mode'
-const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
+const themeStore = createStore<ThemeState>((set, get) => ({
+  mode: (() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved === null) return 'light'
+      const parsed = z.enum(['light', 'dark', 'system']).safeParse(saved)
+      if (parsed.success) return parsed.data
+      console.warn('[workbench] Invalid theme preference; using light theme')
+      return 'light'
+    } catch (error) {
+      console.warn('[workbench] Could not restore theme preference', error)
+      return 'light'
+    }
+  })(),
+  systemDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+  setMode: (mode) => {
+    set({ mode })
+    try { localStorage.setItem(STORAGE_KEY, mode) } catch { /* Session theme remains active. */ }
+  },
+  setSystemDark: (systemDark) => set({ systemDark })
+}))
 
 export function ThemeProvider({ children }: { children: ReactNode }): ReactElement {
-  const [mode, setMode] = useState<ThemeMode>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'light'
-  })
-  const [systemDark, setSystemDark] = useState<boolean>(
-    () => window.matchMedia('(prefers-color-scheme: dark)').matches
-  )
+  const mode = useStore(themeStore, (state) => state.mode)
+  const systemDark = useStore(themeStore, (state) => state.systemDark)
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = (event: MediaQueryListEvent): void => setSystemDark(event.matches)
+    const handler = (event: MediaQueryListEvent): void => themeStore.getState().setSystemDark(event.matches)
     media.addEventListener('change', handler)
     return () => media.removeEventListener('change', handler)
   }, [])
@@ -32,25 +50,20 @@ export function ThemeProvider({ children }: { children: ReactNode }): ReactEleme
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
-    localStorage.setItem(STORAGE_KEY, mode)
   }, [mode, isDark])
 
   return (
-    <ThemeContext.Provider
-      value={{
-        mode,
-        isDark,
-        setMode,
-        toggleTheme: () => setMode((prev) => (prev === 'dark' ? 'light' : 'dark'))
-      }}
-    >
-      {children}
-    </ThemeContext.Provider>
+    <>{children}</>
   )
 }
 
-export function useTheme(): ThemeContextValue {
-  const context = useContext(ThemeContext)
-  if (!context) throw new Error('useTheme 必须在 ThemeProvider 内使用')
-  return context
+export function useTheme(): { mode: ThemeMode; isDark: boolean; setMode: (mode: ThemeMode) => void; toggleTheme: () => void } {
+  const mode = useStore(themeStore, (state) => state.mode)
+  const systemDark = useStore(themeStore, (state) => state.systemDark)
+  return {
+    mode,
+    isDark: mode === 'dark' || (mode === 'system' && systemDark),
+    setMode: themeStore.getState().setMode,
+    toggleTheme: () => themeStore.getState().setMode(themeStore.getState().mode === 'dark' ? 'light' : 'dark')
+  }
 }

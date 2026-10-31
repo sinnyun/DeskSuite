@@ -14,6 +14,7 @@
 - `status()` 返回当前运行作业 ID 和扫描根目录。
 - 使用 `fs.opendir` 遍历，跳过符号链接及默认忽略目录名（`node_modules`、`.git`、`$RECYCLE.BIN`、`System Volume Information`）。可选 `*`、`?` 规则匹配目录项名称或根目录相对路径。
 - 每 500 行提交一次 upsert。只有所有根目录遍历完成后才删除本次未发现的行；取消或失败会保留已有索引，不执行过期清理。
+- 过期清理按降序 `path_key` 对 `files` 和 `folders` 游标分页，每次最多读取 500 行。所有分页删除与暂存行清理都在一个外层事务中，因此清理仍是全有或全无；分页内部事务使用 savepoint。根目录范围通过 JavaScript 对规范化路径做包含判断，不使用 SQL `LIKE`。完成的作业摘要新增 `staleFilesRemoved` / `staleFoldersRemoved`；只有完整扫描结束后才清理，页间不让出事件循环。
 - `devlab://` 合成行不属于磁盘根目录，不受影响。
 
 ## MCP

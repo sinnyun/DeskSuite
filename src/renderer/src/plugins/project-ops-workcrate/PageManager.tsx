@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent, ReactElement } from 'react'
 import { ArrowLeft, ExternalLink, FolderOpen, Image, Plus, RefreshCw } from 'lucide-react'
-import { call, useUiKit } from '../../workbench/sdk'
+import { callValidated, useUiKit } from '../../workbench/sdk'
+import { boardPreviewSchema } from './schemas'
 
 interface Board { id: string; projectId: string; index: number; title: string; info: { materialCategory: string; material: string; size: string; quantity: string } }
 export interface PageExport { format: 'png' | 'jpg' | 'pdf'; scale: number; boardIds?: string[] }
@@ -51,7 +52,7 @@ export function PageManager({ projectId, projectName, hasDocument, boards, busy,
 function SelectablePage({ board, selected, busy, onChoose, onOpen }: { board: Board; selected: boolean; busy: boolean; onChoose: (event: MouseEvent) => void; onOpen: () => void }): ReactElement {
   const { DesktopButton, DesktopCardButton } = useUiKit()
   const [preview, setPreview] = useState('')
-  useEffect(() => { let alive = true; void call<string>('workcrateBoards', 'preview', board.projectId, board.id).then((value) => { if (alive) setPreview(value) }).catch(() => { if (alive) setPreview('') }); return () => { alive = false } }, [board])
+  useEffect(() => { let alive = true; void callValidated(boardPreviewSchema, 'workcrateBoards', 'preview', board.projectId, board.id).then((value) => { if (alive) setPreview(value) }).catch(() => { if (alive) setPreview('') }); return () => { alive = false } }, [board])
   return <article data-page-id={board.id} data-selected={selected} className={`rounded-lg border p-3 ${selected ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] dark:bg-[var(--ds-accent-soft)]' : 'border-[var(--ds-border)] bg-[var(--ds-surface)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]'}`}>
     <div className="flex items-center gap-2"><input type="checkbox" aria-label={`选择第 ${board.index + 1} 页`} checked={selected} disabled={busy} onChange={() => undefined} onClick={onChoose} className="h-4 w-4 accent-[var(--ds-accent)]"/><span className="text-xs text-[var(--ds-text-muted)]">{String(board.index + 1).padStart(2, '0')}</span><DesktopButton type="button" size="sm" variant="ghost" disabled={busy} onClick={onChoose} className="min-w-0 flex-1 justify-start truncate text-left font-semibold">{board.title}</DesktopButton><DesktopButton size="xs" disabled={busy} onClick={onOpen}>编辑页面</DesktopButton></div>
     <DesktopCardButton type="button" selected={selected} aria-label={`选择页面：${board.title}`} aria-pressed={selected} disabled={busy} onClick={onChoose} className="mt-3 flex h-[260px] w-full items-center justify-center overflow-hidden p-2">{preview ? <img src={preview} alt={`${board.title} 预览`} draggable={false} className="h-full w-full object-contain"/> : <Image className="h-6 w-6 text-[var(--ds-text-subtle)]"/>}</DesktopCardButton>

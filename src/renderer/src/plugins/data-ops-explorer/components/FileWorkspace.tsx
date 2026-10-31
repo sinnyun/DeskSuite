@@ -2,10 +2,11 @@ import { useEffect, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { ReactElement } from 'react'
 import { call, getService, useUiKit } from '../../../workbench/sdk'
+import { fsChangedSchema } from '../schema'
 import { PaneStoreProvider, usePaneStoreContext } from '../PaneContext'
 import { explorerPanes } from '../panes'
 import { metadataStore } from '../metadata'
-import { normalizePath, parentDirectory, useExplorer, visibleEntries } from '../store'
+import { normalizePath, parentDirectory, useExplorerShallow, visibleEntries } from '../store'
 import { FileGalleryView } from './FileGalleryView'
 import { FileGridView } from './FileGridView'
 import { FileListView } from './FileListView'
@@ -52,7 +53,11 @@ function releasePaneWatch(paneId: string): void {
 }
 
 function PaneContent(): ReactElement {
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    groupingEnabled: s.groupingEnabled, entries: s.entries, path: s.path, viewMode: s.viewMode,
+    search: s.search, kindFilter: s.kindFilter, favoriteOnly: s.favoriteOnly, minRating: s.minRating,
+    tagFilter: s.tagFilter, sortField: s.sortField, sortOrder: s.sortOrder
+  }))
   const store = usePaneStoreContext()
   if (state.groupingEnabled) {
     const service = getService<GroupedViewService>('explorerGroupedView')
@@ -76,7 +81,7 @@ function PaneContent(): ReactElement {
 }
 
 function EntryView({ entries, embedded = false }: { entries?: FsEntry[]; embedded?: boolean }): ReactElement {
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({ viewMode: s.viewMode }))
   if (state.viewMode === 'grid') return <FileGridView entries={entries} embedded={embedded} />
   if (state.viewMode === 'gallery') return <FileGalleryView />
   return <FileListView entries={entries} embedded={embedded} />
@@ -127,7 +132,10 @@ function PaneFrame({
   active: boolean
   activate: () => void
 }): ReactElement {
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    tagFocus: s.tagFocus, entries: s.entries, path: s.path, expandedDirectories: s.expandedDirectories,
+    nextCursor: s.nextCursor, loadingMore: s.loadingMore
+  }))
   const store = usePaneStoreContext()
   const { DesktopButton } = useUiKit()
 
@@ -159,21 +167,20 @@ function PaneFrame({
       void store.applyChanges(paths, invalidate)
     }
     const unsubscribe = window.bridge.onEvent((channel, payload) => {
-      if (channel !== 'fs:changed' || !payload || typeof payload !== 'object') return
-      const event = payload as { dirs?: unknown; paths?: unknown; invalidate?: unknown }
-      if (!Array.isArray(event.dirs)) return
-      const paths = Array.isArray(event.paths)
-        ? event.paths.filter((path): path is string => typeof path === 'string')
-        : []
+      if (channel !== 'fs:changed') return
+      const decoded = fsChangedSchema.safeParse(payload)
+      if (!decoded.success) return
+      const event = decoded.data
+      const paths = event.paths
       if (state.tagFocus) {
         for (const path of paths) pendingPaths.add(path)
-        pendingInvalidate ||= event.invalidate === true
+        pendingInvalidate ||= event.invalidate
       } else {
         if (!state.path) return
         const current = normalizePath(state.path)
-        if (!event.dirs.some((dir) => typeof dir === 'string' && normalizePath(dir) === current)) return
+        if (!event.dirs.some((dir) => normalizePath(dir) === current)) return
         for (const path of paths) pendingPaths.add(path)
-        pendingInvalidate ||= event.invalidate === true
+        pendingInvalidate ||= event.invalidate
       }
       if (timer) clearTimeout(timer)
       timer = setTimeout(flush, 180)

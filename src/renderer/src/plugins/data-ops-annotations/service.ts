@@ -1,4 +1,13 @@
-import { call } from '../../workbench/sdk'
+import { createStore } from 'zustand/vanilla'
+import { subscribeWithSelector } from 'zustand/middleware'
+import { call, callValidated } from '../../workbench/sdk'
+import {
+  annotationTagListSchema,
+  annotationTagSchema,
+  annotationsChangedSchema,
+  entriesByPathSchema,
+  importLegacyResultSchema
+} from './schemas'
 
 export interface EntryMeta {
   favorite: boolean
@@ -28,33 +37,40 @@ export interface AnnotationEntry {
 
 const EMPTY: EntryMeta = Object.freeze({ favorite: false, rating: 0, tags: [] })
 
+interface AnnotationState {
+  entries: MetadataMap
+  notes: Readonly<Record<string, string>>
+}
+
+const stateStore = createStore<AnnotationState>()(subscribeWithSelector(() => ({ entries: Object.freeze({}), notes: Object.freeze({}) })))
+
 class AnnotationStore {
-  private readonly entries = new Map<string, EntryMeta>()
-  private readonly notes = new Map<string, string>()
   private readonly tagIds = new Map<string, Map<string, number>>()
-  private readonly listeners = new Set<() => void>()
   private readonly pending = new Set<string>()
   private readonly queuedPaths = new Set<string>()
   private loadTask: Promise<void> | undefined
   private treeCache: TagItem[] = []
   private treeLoaded = false
   private treeRequest: Promise<TagItem[]> | undefined
-  private snapshot: MetadataMap = Object.freeze({})
   private running = false
   private stopEvents: (() => void) | undefined
 
-  getSnapshot = (): MetadataMap => this.snapshot
+  getSnapshot = (): MetadataMap => stateStore.getState().entries
 
   subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+    return stateStore.subscribe(listener)
+  }
+
+  subscribePath = (path: string, listener: () => void): (() => void) => {
+    return stateStore.subscribe((state) => state.entries[path] ?? EMPTY, listener)
   }
 
   start(): () => void {
     this.running = true
     this.stopEvents?.()
-    this.stopEvents = window.bridge.onEvent((channel) => {
-      if (channel === 'annotations:changed') void this.refreshKnown()
+    this.stopEvents = window.bridge.onEvent((channel, payload) => {
+      if (channel !== 'annotations:changed') return
+      if (annotationsChangedSchema.safeParse(payload).success) void this.refreshKnown()
     })
     void this.tree().catch(() => undefined)
     return () => {
@@ -66,7 +82,7 @@ class AnnotationStore {
 
   get(path: string | null | undefined): EntryMeta {
     if (!path) return EMPTY
-    const cached = this.entries.get(path)
+    const cached = stateStore.getState().entries[path]
     if (cached) return cached
     void this.load([path])
     return EMPTY
@@ -74,8 +90,8 @@ class AnnotationStore {
 
   getNote(path: string | null | undefined): string {
     if (!path) return ''
-    if (!this.entries.has(path)) void this.load([path])
-    return this.notes.get(path) ?? ''
+    if (!stateStore.getState().entries[path]) void this.load([path])
+    return stateStore.getState().notes[path] ?? ''
   }
 
   prime(paths: string[]): Promise<void> {
@@ -83,13 +99,13 @@ class AnnotationStore {
   }
 
   async forPaths(paths: string[]): Promise<Record<string, AnnotationEntry>> {
-    return call('annotations', 'forPaths', paths)
+    return callValidated(entriesByPathSchema, 'annotations', 'forPaths', paths)
   }
 
   tree(force = false): Promise<TagItem[]> {
     if (this.treeRequest) return this.treeRequest
     if (!force && this.treeLoaded) return Promise.resolve(this.treeCache)
-    const request = call<TagItem[]>('annotations', 'tree').then((tree) => {
+    const request = callValidated(annotationTagListSchema, 'annotations', 'tree').then((tree) => {
       this.treeCache = tree
       this.treeLoaded = true
       this.rebuildTagIds()
@@ -115,8 +131,7 @@ class AnnotationStore {
   }
 
   setNote(path: string, note: string): void {
-    this.notes.set(path, note)
-    this.emit()
+    stateStore.setState((state) => ({ notes: { ...state.notes, [path]: note } }))
     void call('annotations', 'setNote', { path, note }).catch(() => this.load([path]))
   }
 
@@ -150,21 +165,21 @@ class AnnotationStore {
       }
     }
     visit(this.treeCache)
-    for (const meta of this.entries.values()) for (const tag of meta.tags) names.add(tag)
+    for (const meta of Object.values(stateStore.getState().entries)) for (const tag of meta.tags) names.add(tag)
     return [...names].sort((a, b) => a.localeCompare(b))
   }
 
   exportFor = (paths: string[]): Record<string, EntryMeta> => {
     const result: Record<string, EntryMeta> = {}
     for (const path of paths) {
-      const value = this.entries.get(path)
+      const value = stateStore.getState().entries[path]
       if (value) result[path] = value
     }
     return result
   }
 
   async importLegacy(map: Record<string, unknown>): Promise<{ imported: number; skipped: number }> {
-    const result = await call<{ imported: number; skipped: number }>('annotations', 'importLegacy', map)
+    const result = await callValidated(importLegacyResultSchema, 'annotations', 'importLegacy', map)
     await this.load(Object.keys(map))
     return result
   }
@@ -173,8 +188,8 @@ class AnnotationStore {
     if (this.treeCache.length === 0) await this.tree()
     const existing = this.findTagId(name)
     if (existing !== undefined) return existing
-    const created = await call<TagItem>('annotations', 'create', { name })
-    this.treeCache = await call<TagItem[]>('annotations', 'tree')
+    const created = await callValidated(annotationTagSchema, 'annotations', 'create', { name })
+    this.treeCache = await callValidated(annotationTagListSchema, 'annotations', 'tree')
     this.rebuildTagIds()
     return created.id
   }
@@ -192,7 +207,7 @@ class AnnotationStore {
   }
 
   private rebuildTagIds(): void {
-    for (const [path, entry] of this.entries) {
+    for (const [path, entry] of Object.entries(stateStore.getState().entries)) {
       const ids = new Map<string, number>()
       for (const name of entry.tags) {
         const tagId = this.findTagId(name)
@@ -216,18 +231,20 @@ class AnnotationStore {
           batch.forEach((path) => this.queuedPaths.delete(path))
           try {
             const result = await this.forPaths(batch)
+            const entries = { ...stateStore.getState().entries }
+            const notes = { ...stateStore.getState().notes }
             for (const path of batch) {
               const item = result[path]
               if (!item) continue
-              this.entries.set(path, {
+              entries[path] = Object.freeze({
                 favorite: item.favorite,
                 rating: item.rating,
                 tags: item.tags.map((tag) => tag.name)
               })
-              this.notes.set(path, item.note)
+              notes[path] = item.note
               this.tagIds.set(path, new Map(item.tags.map((tag) => [tag.name, tag.id])))
             }
-            if (this.running) this.emit()
+            if (Object.keys(entries).length) stateStore.setState({ entries: Object.freeze(entries), notes: Object.freeze(notes) })
           } catch (error) {
             failure ??= error
           } finally {
@@ -245,19 +262,13 @@ class AnnotationStore {
 
   private async refreshKnown(): Promise<void> {
     if (!this.running) return
-    await this.load([...this.entries.keys()])
+    await this.load(Object.keys(stateStore.getState().entries))
     await this.tree(true).catch(() => this.treeCache)
-    this.emit()
   }
 
   private setLocal(path: string, value: EntryMeta): void {
-    this.entries.set(path, Object.freeze({ ...value, tags: [...new Set(value.tags)] }))
-    this.emit()
-  }
-
-  private emit(): void {
-    this.snapshot = Object.freeze(Object.fromEntries(this.entries))
-    for (const listener of this.listeners) listener()
+    const normalized = Object.freeze({ ...value, tags: [...new Set(value.tags)] })
+    stateStore.setState((state) => ({ entries: Object.freeze({ ...state.entries, [path]: normalized }) }))
   }
 }
 

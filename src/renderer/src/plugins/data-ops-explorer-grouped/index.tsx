@@ -1,9 +1,10 @@
+import { useStore } from 'zustand'
 import { useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { Rows3 } from 'lucide-react'
 import { definePlugin, getService, useUiKit } from '../../workbench/sdk'
 import { groupedViewComponent } from './GroupedView'
-import { groupOptionsStore, type GroupBy } from './group-state'
+import { getGroupOptions, groupOptionsStore, type GroupBy } from './group-state'
 
 interface ExplorerState {
   groupingEnabled: boolean
@@ -31,7 +32,8 @@ function GroupedToolbar(): ReactElement {
   useSyncExternalStore(panes?.subscribe ?? noopSubscribe, panes?.getSnapshot ?? emptyPaneSnapshot)
   const store = panes?.getActiveStore()
   const explorer = useSyncExternalStore(store?.subscribe ?? noopSubscribe, store?.getState ?? (() => emptyState))
-  const options = useSyncExternalStore(groupOptionsStore.subscribe, groupOptionsStore.getSnapshot)
+  const groupBy = useStore(groupOptionsStore, (state) => state.groupBy)
+  const includeChildren = useStore(groupOptionsStore, (state) => state.includeChildren)
   const active = explorer.groupingEnabled
 
   return <div data-grouped-toolbar className="flex shrink-0 items-center gap-1.5">
@@ -47,24 +49,24 @@ function GroupedToolbar(): ReactElement {
       <DesktopSelect
         className="w-[144px]"
         title="切换分组方式"
-        value={options.groupBy}
+        value={groupBy}
         options={[
           { value: 'kind', label: '分组方式：类型分组' },
           { value: 'modifiedMinute', label: '分组方式：修改时间' },
           { value: 'rating', label: '分组方式：评分' },
           { value: 'folder', label: '分组方式：文件夹' }
         ]}
-        onChange={(value) => groupOptionsStore.set({ groupBy: value as GroupBy })}
+        onChange={(value) => groupOptionsStore.getState().set({ groupBy: value as GroupBy })}
       />
       <DesktopButton
         size="xs"
-        variant={options.includeChildren ? 'primary' : 'subtle'}
+        variant={includeChildren ? 'primary' : 'subtle'}
         className="explorer-scope-button"
-        active={!options.includeChildren}
+        active={!includeChildren}
         title="显示所选目录下所有子文件夹中的条目"
-        onClick={() => groupOptionsStore.set({ includeChildren: !options.includeChildren })}
+        onClick={() => groupOptionsStore.getState().set({ includeChildren: !includeChildren })}
       >
-        {options.includeChildren ? '包含子文件夹' : '仅当前文件夹'}
+        {includeChildren ? '包含子文件夹' : '仅当前文件夹'}
       </DesktopButton>
     </>}
   </div>
@@ -76,5 +78,5 @@ export default definePlugin({
   version: '1.0.0',
   description: '在文件资源管理器工具栏切换分组视图、类型/时间/评分/文件夹分组，并聚合显示子文件夹条目',
   author: 'DeskSuite 内置',
-  services: { explorerGroupedView: { component: groupedViewComponent, toolbarComponent: GroupedToolbar, configure: groupOptionsStore.set, getOptions: groupOptionsStore.getSnapshot } }
+  services: { explorerGroupedView: { component: groupedViewComponent, toolbarComponent: GroupedToolbar, configure: (patch: Partial<{ groupBy: GroupBy; includeChildren: boolean }>) => groupOptionsStore.getState().set(patch), getOptions: getGroupOptions } }
 })

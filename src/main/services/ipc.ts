@@ -1,6 +1,8 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import type { Context } from 'cordis'
 import { Service } from 'cordis'
+import { z } from 'zod'
+import { errorMessage } from './error-text'
 import { currentTraceId, withTrace } from './trace-context'
 
 export type IpcMethods = Record<string, (...args: never[]) => unknown>
@@ -51,12 +53,13 @@ export class IpcService extends Service {
           })
           return result
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
+          const message = errorMessage(error)
           this.ctx.emit('ipc/invoke', {
             requestId: id, service, method, phase: 'end', error: message,
             durationMs: Math.round(performance.now() - startedAt)
           })
-          throw error
+          if (error instanceof Error && !(error instanceof z.ZodError)) throw error
+          throw new Error(message, { cause: error })
         }
       })
     })
@@ -75,7 +78,10 @@ export class IpcService extends Service {
       .map(([method, handler]) => ({ service, method, handler })))
   }
 
-  handle(service: string, methods: IpcMethods): void {
+  handle(service: string, methods: IpcMethods, inputSchemas: Record<string, z.ZodType<unknown[]>> = {}): void {
+    for (const method of Object.keys(inputSchemas)) {
+      if (typeof methods[method] !== 'function') throw new Error(`IPC 参数 schema 没有对应方法：${service}.${method}`)
+    }
     const existing = this.handlers.get(service) ?? {}
     this.handlers.set(service, { ...existing, ...methods })
     for (const [method, handler] of Object.entries(methods)) {
@@ -84,7 +90,7 @@ export class IpcService extends Service {
         const current = currentMethods?.[method]
         if (typeof current !== 'function') throw new Error(`工作台操作已卸载：${service}.${method}`)
         return (current as (...values: unknown[]) => unknown).apply(currentMethods, args)
-      })
+      }, inputSchemas[method])
     }
   }
 

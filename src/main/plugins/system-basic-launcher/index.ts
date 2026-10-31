@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { join, extname, basename } from 'node:path'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 
 const execFileAsync = promisify(execFile)
 const CACHE_TTL = 24 * 60 * 60 * 1000
@@ -15,6 +15,13 @@ const CacheSchema = z.object({ createdAt: z.number(), entries: z.array(z.object(
   target: z.string().optional(), description: z.string().optional(), publisher: z.string().optional(),
   version: z.string().optional()
 })).max(5000) })
+const InstalledApplicationSchema = z.object({
+  DisplayName: z.string().max(512).optional(),
+  DisplayIcon: z.string().max(32768).optional(),
+  InstallLocation: z.string().max(32768).optional(),
+  Publisher: z.string().max(512).optional(),
+  DisplayVersion: z.string().max(256).optional()
+}).passthrough()
 const LauncherGroupSchema = z.object({ id: z.string(), name: z.string().min(1).max(32), createdAt: z.number() })
 const LauncherGroupsSchema = z.array(LauncherGroupSchema).max(100)
   const LauncherLibrarySchema = z.object({ groups: LauncherGroupsSchema, assignments: z.record(z.string(), z.string()), metadata: z.record(z.string(), z.object({ title: z.string().trim().min(1).max(100).optional(), description: z.string().trim().max(500).optional() })) .default({}) })
@@ -64,8 +71,11 @@ async function installedApplications(): Promise<LauncherEntry[]> {
       windowsHide: true, timeout: 15000, maxBuffer: 4 * 1024 * 1024
     })
     const parsed: unknown = JSON.parse(stdout.trim() || '[]')
-    const rows = Array.isArray(parsed) ? parsed : [parsed]
-    return rows.flatMap((row: Record<string, unknown>) => {
+    const rows = Array.isArray(parsed) ? parsed.slice(0, 5000) : [parsed]
+    return rows.flatMap((raw: unknown) => {
+      const validated = InstalledApplicationSchema.safeParse(raw)
+      if (!validated.success) return []
+      const row = validated.data
       const name = typeof row.DisplayName === 'string' ? row.DisplayName.trim() : ''
       const displayIconRaw = typeof row.DisplayIcon === 'string' ? row.DisplayIcon.trim() : ''
       const displayIconMatch = displayIconRaw.match(/^"?(.+?\.exe)"?(?:,\s*-?\d+)?$/i)
@@ -189,6 +199,17 @@ const launcherPlugin: Plugin = {
         if (!item) return null
         try { return (await app.getFileIcon(item.target ?? item.path, { size: 'normal' })).toDataURL() } catch { return null }
       }
+    }, {
+      list: z.tuple([z.string().max(512).optional(), z.number().int().min(0).max(10_000_000).optional()]),
+      summary: z.tuple([z.string().max(512).optional()]),
+      groups: z.tuple([]),
+      createGroup: z.tuple([z.string().trim().min(1).max(32)]),
+      renameGroup: z.tuple([z.string().min(1).max(128), z.string().trim().min(1).max(32)]),
+      deleteGroup: z.tuple([z.string().min(1).max(128)]),
+      assignGroup: z.tuple([z.string().min(1).max(128), z.string().min(1).max(128).nullable()]),
+      refresh: z.tuple([]),
+      open: z.tuple([z.string().min(1).max(128)]),
+      icon: z.tuple([z.string().min(1).max(128)])
     })
     ctx.mcp.registerTool('launcher_list', { description: '列出启动台程序、分类和用户补充的标题/说明', inputSchema: { query: z.string().optional(), offset: z.number().int().min(0).optional() }, execute: async (args) => mcpText(JSON.stringify(await list(String(args.query ?? ''), Number(args.offset ?? 0)))) })
     ctx.mcp.registerTool('launcher_groups', { description: '列出启动台分类及程序数量', inputSchema: {}, execute: async () => mcpText(JSON.stringify(await ctx.store.read<LauncherLibrary>('launcher-library'))) })
@@ -201,7 +222,7 @@ const launcherPlugin: Plugin = {
           return { ...library, groups: [...library.groups, { id: createHash('sha1').update(`${Date.now()}-${label}`).digest('hex').slice(0, 12), name: label, createdAt: Date.now() }] }
         })
         return mcpText(JSON.stringify(result.groups))
-      } catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+      } catch (error) { return mcpErrorFrom(error) }
     } })
     ctx.mcp.registerTool('launcher_program_update', { description: '更新启动台程序的分类、显示标题和说明；省略字段表示保留原值，groupId 传空字符串表示取消分类', inputSchema: { id: z.string().min(1), groupId: z.string().optional(), title: z.string().trim().min(1).max(100).optional(), description: z.string().trim().max(500).optional() }, mutating: true, execute: async (args) => {
       try {
@@ -222,7 +243,7 @@ const launcherPlugin: Plugin = {
           return { ...library, assignments, metadata }
         })
         return mcpText(JSON.stringify({ updated: id }))
-      } catch (error) { return mcpError(error instanceof Error ? error.message : String(error)) }
+      } catch (error) { return mcpErrorFrom(error) }
     } })
   }
 }

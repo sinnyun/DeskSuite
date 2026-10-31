@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactElement } from 'react'
+import { z } from 'zod'
 import { Archive, Clipboard, ClipboardPaste, ClipboardPen, FileImage, FileText, Image as ImageIcon, Link2, Pencil, Plus, RefreshCw, Search, Star, Trash2, Type, Upload, X } from 'lucide-react'
-import { call, useLayout, useUiKit } from '../../../workbench/sdk'
+import { call, callValidated, errorText, useLayoutShallow, useUiKit } from '../../../workbench/sdk'
 
 const LEGACY_HISTORY_KEY = 'desksuite.clipboard.history'
 const POLL_MS = 1500
@@ -19,6 +20,26 @@ interface HistoryItem {
 interface ClipboardGroup { id: string; name: string; createdAt: number }
 type ClipboardFilter = 'all' | 'favorites' | 'temporary' | 'text' | 'link' | 'code' | 'image' | `group:${string}`
 const categoryNames = { text: '文本', link: '链接', code: '代码', image: '图片' } as const
+const historyItemSchema = z.object({
+  id: z.string().min(1).max(128),
+  kind: z.enum(['text', 'image']),
+  content: z.string().max(1_000_000).optional(),
+  imageSlot: z.number().int().min(0).max(49).optional(),
+  category: z.enum(['text', 'link', 'code', 'image']),
+  favorite: z.boolean(),
+  createdAt: z.number().finite().nonnegative(),
+  expiresAt: z.number().finite().nonnegative(),
+  groupId: z.string().max(128).optional()
+}).strict()
+const historySchema = z.array(historyItemSchema).max(50)
+const groupsSchema = z.array(z.object({
+  id: z.string().min(1).max(128), name: z.string().min(1).max(32), createdAt: z.number().finite().nonnegative()
+}).strict()).max(50)
+const currentTextSchema = z.string().max(4_000_000)
+const imageDataUrlSchema = z.string().max(12 * 1024 * 1024).regex(/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/)
+const nullableImageDataUrlSchema = imageDataUrlSchema.nullable()
+const historyImageSchema = nullableImageDataUrlSchema
+const historyItemOrNullSchema = historyItemSchema.nullable()
 
 function legacyHistory(): string[] {
   try {
@@ -40,7 +61,7 @@ function HistoryCard({ item, active, groupName, onSelect, onFavorite, onRemove }
   useEffect(() => {
     if (item.kind !== 'image') return
     let alive = true
-    void call<string | null>('clipboard', 'historyImage', item.id).then((value) => { if (alive) setImage(value) }).catch(() => { if (alive) setImage(null) })
+    void callValidated(historyImageSchema, 'clipboard', 'historyImage', item.id).then((value) => { if (alive) setImage(value) }).catch(() => { if (alive) setImage(null) })
     return () => { alive = false }
   }, [item.id, item.kind])
   const Icon = item.kind === 'image' ? FileImage : item.category === 'link' ? Link2 : FileText
@@ -55,7 +76,7 @@ function HistoryCard({ item, active, groupName, onSelect, onFavorite, onRemove }
 
 export function ClipboardPanel(): ReactElement | null {
   const { ThemeFloatingPanel, DesktopButton, DesktopIconButton, DesktopInput, DesktopSelect, DesktopTextarea } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'clipboard'
   const [current, setCurrent] = useState('')
   const [currentImage, setCurrentImage] = useState<string | null>(null)
@@ -78,7 +99,7 @@ export function ClipboardPanel(): ReactElement | null {
   }
   const refreshHistory = async (): Promise<HistoryItem[]> => {
     await call('clipboard', 'capture')
-    const next = await call<HistoryItem[]>('clipboard', 'history')
+    const next = await callValidated(historySchema, 'clipboard', 'history')
     setHistory(next)
     return next
   }
@@ -89,7 +110,7 @@ export function ClipboardPanel(): ReactElement | null {
       const old = legacyHistory()
       if (old.length) await call('clipboard', 'importLegacy', old)
       localStorage.removeItem(LEGACY_HISTORY_KEY)
-      const [next, nextGroups] = await Promise.all([call<HistoryItem[]>('clipboard', 'history'), call<ClipboardGroup[]>('clipboard', 'groups')])
+      const [next, nextGroups] = await Promise.all([callValidated(historySchema, 'clipboard', 'history'), callValidated(groupsSchema, 'clipboard', 'groups')])
       if (alive) { setHistory(next); setGroups(nextGroups) }
     }
     void migrate().catch(() => {})
@@ -100,7 +121,7 @@ export function ClipboardPanel(): ReactElement | null {
     let alive = true
     const poll = async (): Promise<void> => {
       try {
-        const [text, image] = await Promise.all([call<string>('clipboard', 'readText'), call<string | null>('clipboard', 'readImage')])
+        const [text, image] = await Promise.all([callValidated(currentTextSchema, 'clipboard', 'readText'), callValidated(nullableImageDataUrlSchema, 'clipboard', 'readImage')])
         if (!alive) return
         setCurrent(text); setCurrentImage(image)
         const next = await refreshHistory()
@@ -122,7 +143,7 @@ export function ClipboardPanel(): ReactElement | null {
   }), [history, filter, query])
   const selected = visible.find((item) => item.id === selectedId) ?? (!newText ? visible[0] : undefined)
   useEffect(() => { if (selected?.kind === 'text') setDetailDraft(selected.content ?? '') }, [selected?.id, selected?.content])
-  const imageRequest = async (item: HistoryItem): Promise<string | null> => item.kind === 'image' ? call<string | null>('clipboard', 'historyImage', item.id) : null
+  const imageRequest = async (item: HistoryItem): Promise<string | null> => item.kind === 'image' ? callValidated(historyImageSchema, 'clipboard', 'historyImage', item.id) : null
   useEffect(() => {
     let alive = true
     if (!selected) { setSelectedImage(null); return }
@@ -133,28 +154,28 @@ export function ClipboardPanel(): ReactElement | null {
   const createGroup = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
     if (!newGroup.trim()) return
-    try { setGroups(await call<ClipboardGroup[]>('clipboard', 'createGroup', newGroup)); setNewGroup('') }
-    catch (cause) { notify(cause instanceof Error ? cause.message : '创建分组失败') }
+    try { setGroups(await callValidated(groupsSchema, 'clipboard', 'createGroup', newGroup)); setNewGroup('') }
+    catch (cause) { notify(errorText(cause, '创建分组失败')) }
   }
   const deleteGroup = async (group: ClipboardGroup): Promise<void> => {
     try {
-      setGroups(await call<ClipboardGroup[]>('clipboard', 'deleteGroup', group.id))
-      setHistory(await call<HistoryItem[]>('clipboard', 'history'))
+      setGroups(await callValidated(groupsSchema, 'clipboard', 'deleteGroup', group.id))
+      setHistory(await callValidated(historySchema, 'clipboard', 'history'))
       if (filter === `group:${group.id}`) setFilter('all')
-    } catch (cause) { notify(cause instanceof Error ? cause.message : '删除分组失败') }
+    } catch (cause) { notify(errorText(cause, '删除分组失败')) }
   }
   const renameGroup = async (group: ClipboardGroup): Promise<void> => {
     const name = window.prompt('重命名分组', group.name)
     if (name === null || !name.trim()) return
-    try { setGroups(await call<ClipboardGroup[]>('clipboard', 'renameGroup', group.id, name)) }
-    catch (cause) { notify(cause instanceof Error ? cause.message : '重命名分组失败') }
+    try { setGroups(await callValidated(groupsSchema, 'clipboard', 'renameGroup', group.id, name)) }
+    catch (cause) { notify(errorText(cause, '重命名分组失败')) }
   }
   const assignGroup = async (groupId: string): Promise<void> => {
     if (!selected) return
     try {
       await call('clipboard', 'assignGroup', selected.id, groupId || null)
       setHistory((items) => items.map((item) => item.id === selected.id ? { ...item, groupId: groupId || undefined } : item))
-    } catch (cause) { notify(cause instanceof Error ? cause.message : '分组更新失败') }
+    } catch (cause) { notify(errorText(cause, '分组更新失败')) }
   }
   const toggleFavorite = async (item: HistoryItem): Promise<void> => {
     await call('clipboard', 'setFavorite', item.id, !item.favorite)
@@ -175,21 +196,21 @@ export function ClipboardPanel(): ReactElement | null {
         setSelectedId(next[0]?.id ?? ''); setNewText(false)
         notify('内容已写入并保存')
       } else if (selected) {
-        const updated = await call<HistoryItem>('clipboard', 'updateHistory', selected.id, detailDraft)
+        const updated = await callValidated(historyItemOrNullSchema, 'clipboard', 'updateHistory', selected.id, detailDraft)
         if (updated) { setHistory((items) => [updated, ...items.filter((item) => item.id !== selected.id && item.id !== updated.id)]); setSelectedId(updated.id) }
         notify('内容已保存')
       }
-    } catch (cause) { notify(cause instanceof Error ? cause.message : '保存失败') }
+    } catch (cause) { notify(errorText(cause, '保存失败')) }
     finally { setBusy(false) }
   }
   const copySelected = async (): Promise<void> => {
     if (!selected) return
     try { await call('clipboard', 'useHistory', selected.id); notify('已复制到系统剪贴板'); await refreshHistory() }
-    catch (cause) { notify(cause instanceof Error ? cause.message : '复制失败') }
+    catch (cause) { notify(errorText(cause, '复制失败')) }
   }
   const clearTemporary = async (): Promise<void> => {
     await call('clipboard', 'clearHistory')
-    setHistory(await call<HistoryItem[]>('clipboard', 'history'))
+    setHistory(await callValidated(historySchema, 'clipboard', 'history'))
     if (selected && !selected.favorite) { setSelectedId(''); setNewText(false) }
   }
   const startNewText = (): void => { setSelectedId(''); setNewText(true); setDetailDraft('') }

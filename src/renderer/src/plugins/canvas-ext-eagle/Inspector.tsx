@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Copy, ExternalLink, RefreshCw } from 'lucide-react'
-import { call, useUiKit } from '../../workbench/sdk'
+import { call, errorText, useUiKit } from '../../workbench/sdk'
 import type { EagleSource, Node } from './contract'
 
 export function EagleInspector({ node }: { node: Node }): ReactElement | null {
@@ -16,7 +16,7 @@ export function EagleInspector({ node }: { node: Node }): ReactElement | null {
       if (!node.resource || node.type !== 'image') return
       void call<EagleSource | null>('eagleLinks', 'get', node.resource).then(value => {
         if (!disposed) setSource(value)
-      }).catch(e => { if (!disposed) setError(String(e)) })
+      }).catch(cause => { if (!disposed) setError(errorText(cause, 'Eagle 信息读取失败')) })
     }
     load()
     const unsubscribe = window.bridge.onEvent((channel, payload) => {
@@ -27,7 +27,7 @@ export function EagleInspector({ node }: { node: Node }): ReactElement | null {
   if (!source) return error ? <p className="wb-muted">Eagle 信息读取失败：{error}</p> : null
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setError('')
-    try { await fn() } catch (e) { setError(String(e)) } finally { setBusy(false) }
+    try { await fn() } catch (cause) { setError(errorText(cause, 'Eagle 操作失败')) } finally { setBusy(false) }
   }
   const row = (label: string, value: string): ReactElement => <div className="min-w-0" key={label}>
     <div className="flex items-center justify-between gap-2"><span className="wb-muted">{label}</span>

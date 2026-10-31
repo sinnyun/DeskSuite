@@ -5,7 +5,7 @@ import { useUiKit } from '../../../workbench/sdk'
 import {
   explorerStore,
   hasActiveFilters,
-  useExplorer,
+  useExplorerShallow,
   visibleEntries,
   type FsEntry
 } from '../store'
@@ -26,7 +26,11 @@ function Tile({ entry, selected }: { entry: FsEntry; selected: boolean }): React
 
 export function FileGridView({ entries: suppliedEntries, embedded = false, singleColumn = false }: { entries?: FsEntry[]; embedded?: boolean; singleColumn?: boolean } = {}): ReactElement {
   const { DesktopButton } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    entries: s.entries, search: s.search, kindFilter: s.kindFilter, favoriteOnly: s.favoriteOnly,
+    minRating: s.minRating, tagFilter: s.tagFilter, sortField: s.sortField, sortOrder: s.sortOrder,
+    path: s.path, tagFocus: s.tagFocus, status: s.status, error: s.error, selectedPaths: s.selectedPaths
+  }))
   const entries = suppliedEntries ?? visibleEntries(state)
   const tiles = entries.slice(0, MAX_TILES)
 

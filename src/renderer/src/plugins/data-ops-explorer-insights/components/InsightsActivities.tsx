@@ -1,11 +1,11 @@
 import type { ReactElement } from 'react'
 import { Archive, ChartNoAxesColumn } from 'lucide-react'
-import { useLayout, useUiKit } from '../../../workbench/sdk'
+import { useLayoutShallow, useUiKit } from '../../../workbench/sdk'
 import { useBasket } from '../basket'
 
 export function InsightsActivities(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel, openFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel, openFloatingPanel: state.openFloatingPanel }))
   const basket = useBasket()
 
   const toggle = (id: string): void => {

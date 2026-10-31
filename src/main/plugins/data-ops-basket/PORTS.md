@@ -15,6 +15,8 @@ Persistent cross-session file basket. Data lives in the main-process `store` ser
 
 - `ipc`
 - `store`
+- `storage`
+- `mcp`
 
 ## Provided IPC service
 
@@ -29,6 +31,10 @@ Service name: `basket`
 
 `BasketItem` = `{ path, name, isDirectory, kind, size, modifiedAt, addedAt }`.
 
+## MCP tool
+
+- `basket_manage({ action: list | add | remove | clear, items?, path? })` reads or updates the basket. Writes broadcast `basket:changed` so the renderer cache can refresh.
+
 ## Data contract
 
 - Storage key: `basket`, persisted at `<userData>/data/basket.json`; the envelope (version + `.bak`) is owned by the `store` service.
@@ -37,7 +43,7 @@ Service name: `basket`
 
 ## Broadcast events
 
-None.
+`basket:changed` — emitted after add, remove, or clear.
 
 ## Consumed configuration
 

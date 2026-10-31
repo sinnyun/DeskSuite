@@ -32,7 +32,7 @@ WorkCrate 对 VectorCraft 官方 CLI 的适配。WorkCrate 管理物料栏数据
 - `workcrate_panel_open()` 通过渲染层事件打开 DeskSuite 中的 WorkCrate 浮动面板。
 - `workcrate_vectorcraft_config_get()` 读取 VectorCraft 程序路径和控制端口配置。
 - `workcrate_vectorcraft_config_set({ config, confirm: true })` 校验程序路径并更新 VectorCraft 配置。需要完整 MCP 权限和明确确认。
-- `workcrate_project_create({ name, directory, confirm: true })` 创建 WorkCrate 工程、原生 `.vectorcraft` 文档、初始画板和物料栏。`directory` 必须位于已配置的 `mcp.writeRoots` 下。返回工程、文档路径、初始画板目录、工程资料路径和可选的便携目录迁移警告。
+- `workcrate_project_create({ name, directory, confirm: true })` 创建 WorkCrate 工程、原生 `.vectorcraft` 文档、初始画板和物料栏。`directory` 必须位于已配置的 `mcp.writeRoots` 下。返回工程、文档路径、初始画板目录、工程资料路径和可选的便携目录迁移警告；警告离开 provider 前会由主进程共享错误 formatter 限长并脱敏。
 - `workcrate_document_create({ projectId, directory, confirm: true })` 为已有工程创建并关联原生文档。需要完整 MCP 权限和已配置的可写根目录。
 - `workcrate_board_catalog({ projectId })` 读取缓存画板目录。
 - `workcrate_boards_refresh({ projectId })` 显式从已保存的原生文档刷新目录和预览缓存。
@@ -45,7 +45,7 @@ MCP 写操作遵循共享路径策略和当前 MCP 权限设置。MCP 创建工�
 
 - 工程元数据和资料位置由 Projects 服务管理。
 - 本插件在工程资料目录中保存 `boards-cache.json` 和 `native-previews/`。缓存记录与当前原生文档绑定关联。
-- CLI 会话使用隐藏、带超时的 headless 子进程，明确限定文档读写根目录，并使用工程隔离的 CLI 配置。
+- CLI 会话使用隐藏、带超时的 headless 子进程，明确限定文档读写根目录，并使用工程隔离的 CLI 配置。双向每条 UTF-8 JSON-RPC 行限制为 64 MiB，请求 65 秒超时；响应必须符合 JSON-RPC 2.0 成功/错误封套，合法服务端通知会忽略。MCP 工具结果的 content 数组最多 100 项，文本在使用前按 JSON 解析；错误文本截断为 2 KiB。生产 decoder 由 `scripts/verify/workcrate-sidecar-protocol.mjs` 独立验证；此脚本不覆盖与真实 VectorCraft 版本的兼容性。
 - 保存物料栏时，WorkCrate 写入 VectorCraft 原生对象及结构化元数据、保存文档，再刷新画板缓存。
 - 普通画面编辑继续由 VectorCraft 完成。WorkCrate 显式同步已保存的画布并更新画板预览，不提供画布编辑或导出功能。
 
@@ -59,7 +59,7 @@ MCP 写操作遵循共享路径策略和当前 MCP 权限设置。MCP 创建工�
 - IPC `reorderPages({ projectId, boardIds })` 和 MCP `workcrate_boards_reorder({ projectId, boardIds, confirm: true })` 校验完整的当前画板列表，把排序和页码物料栏写入原生文档并保存、刷新预览。
 - MCP `workcrate_document_open({ projectId, confirm: true })` 启动带控制服务器和文档目录读写范围的桌面编辑器，或连接已有控制服务器；GUI 路径为空时使用 CLI 同目录下的桌面程序。
 - MCP `workcrate_panel_open({ projectId?, boardId? })` 分别打开项目管理、页面管理或指定页面编辑。
-- 每 1.5 秒检查保存文件的时间/大小和桌面文档版本，按工程串行刷新。失败时广播 `workcrate:sync-error`，载荷为 `{ projectId, message }`，并自动重试。
+- 每 1.5 秒检查保存文件的时间/大小和桌面文档版本，按工程串行刷新。失败时广播 `workcrate:sync-error`，载荷为 `{ projectId, message }`，并自动重试；消息在广播前由主进程共享错误 formatter 限长并脱敏。
 - 桌面当前文档与工程匹配时，直接读取和编辑该文档，包含未保存修改；WorkCrate 修改会保存该桌面文档。当前显示其他文档时拒绝写入，需先在 VectorCraft 切回工程。外部启动桌面程序时须启用 `--control <配置端口>` 才能实时双向同步；无控制连接时仍支持保存后的文件同步。
 
 `workcrate_panel_open` 还支持可选 `section: connection | basic`，分别打开程序默认信息中的程序连接或基础信息分页。

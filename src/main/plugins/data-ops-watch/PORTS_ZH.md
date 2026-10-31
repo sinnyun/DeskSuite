@@ -28,8 +28,9 @@
 
 ## 广播事件
 
-- `fs:changed` — `{ paths: string[], dirs: string[], invalidate: boolean }`。按 `watch.debounceMs` 设置去抖（100–5000ms，默认 500）；每目录最多列出 200 条变更路径，超出后 `invalidate` 为 true 且 `paths` 为空。
-- `fs:watch:error` — 底层监视器报错时发送 `{ message: string }`。
+- `fs:changed` — 经校验的 watcher payload `{ paths: string[], dirs: [string], invalidate: boolean }`。`paths` 最多包含 200 个绝对路径；达到上限后 `invalidate` 为 true 且 `paths` 为空。按 `watch.debounceMs` 设置去抖（100–5000ms，默认 500）。
+- `fs:watch:error` — 底层监视器报错时发送经校验的 `{ message: string }`；广播前会对错误文案限长并脱敏。
+- `setPaneDirectories`、`clearPane`、`getDirectories` 的返回值在返回前解码为最多 16 个绝对目录字符串。
 
 ## 依赖与行为
 

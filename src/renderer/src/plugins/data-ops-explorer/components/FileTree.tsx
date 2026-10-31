@@ -12,8 +12,9 @@ import {
   Network,
   RefreshCw
 } from 'lucide-react'
-import { call, useUiKit } from '../../../workbench/sdk'
-import { explorerStore, useExplorer, type DriveInfo, type QuickItem } from '../store'
+import { call, callValidated, errorText, useUiKit } from '../../../workbench/sdk'
+import { explorerStore, useExplorerShallow, type DriveInfo, type QuickItem } from '../store'
+import { drivePreferencesSchema } from '../drive-preferences-schema'
 import { QuickBookmarks } from './QuickBookmarks'
 import { formatBytes } from '../format'
 
@@ -59,7 +60,7 @@ function Section({
 
 export function FileTree(): ReactElement {
   const { DesktopButton, DesktopCardButton, DesktopIconButton } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({ quick: s.quick, drives: s.drives, path: s.path, truncated: s.truncated }))
   const [showNetworkDrives, setShowNetworkDrives] = useState(true)
   const [preferencesReady, setPreferencesReady] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -69,14 +70,16 @@ export function FileTree(): ReactElement {
     let receivedEvent = false
     const stop = window.bridge.onEvent((channel, payload) => {
       if (channel !== 'filesystem:drivePreferences') return
-      const preferences = payload as { showNetworkDrives: boolean }
+      const parsed = drivePreferencesSchema.safeParse(payload)
+      if (!parsed.success) return
+      const preferences = parsed.data
       receivedEvent = true
       setShowNetworkDrives(preferences.showNetworkDrives)
       setPreferencesReady(true)
     })
-    void call<{ showNetworkDrives: boolean }>('filesystem', 'getDrivePreferences').then((preferences) => {
+    void callValidated(drivePreferencesSchema, 'filesystem', 'getDrivePreferences').then((preferences) => {
       if (alive && !receivedEvent) { setShowNetworkDrives(preferences.showNetworkDrives); setPreferencesReady(true) }
-    }).catch((error) => { if (alive) setDriveError(String(error)) })
+    }).catch((error) => { if (alive) setDriveError(errorText(error, '无法读取驱动器偏好')) })
     return () => { alive = false; stop() }
   }, [])
   const toggleNetworkDrives = async (): Promise<void> => {
@@ -84,7 +87,7 @@ export function FileTree(): ReactElement {
     setDriveError('')
     try {
       await call('filesystem', 'setDrivePreferences', { showNetworkDrives: !showNetworkDrives })
-    } catch (error) { setDriveError(String(error)) }
+    } catch (error) { setDriveError(errorText(error, '无法保存驱动器偏好')) }
     finally { setSaving(false) }
   }
   return (

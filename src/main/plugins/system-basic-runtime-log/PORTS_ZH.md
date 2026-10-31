@@ -30,7 +30,7 @@
 `mcpTools` 为工具信息数组 `{ name, mutating, impact: 'low'|'high' }[]`（按名称排序），供控制中心渲染
 「只读 / 写（低）/ 写（高）」徽标；不带权限档位字段，当前档位另经 `mcp.getAccess` 读取。
 
-`LogEntry` 还支持 `category`、`traceId`、`phase`、`durationMs`、`status`。输入/输出载荷会对凭据字段脱敏，单条最多 48 KB；主进程环形缓冲最多 3000 条。
+`LogEntry` 还支持 `category`、`traceId`、`phase`、`durationMs`、`status`。载荷保留对象结构，同时遮蔽凭据字段、文本内凭据赋值、Bearer token 和本机绝对路径。字符串最多 12,000 字符、数组每层最多 100 项、对象每层最多 200 个字段、嵌套最多 8 层、序列化后的载荷每条最多 48 KB。主进程环形缓冲保留最多 3000 条，仅驻留内存，不写入磁盘。
 
 ## 提供的 MCP 工具
 
@@ -61,3 +61,7 @@
 - 新增注入 `jobs`、`audit`。
 - MCP `get_job_status({ jobId? })`：查询后台任务的 state/error/summary，省略 ID 列出任务；最多保留 50 个已结束任务，未知 ID 返回错误对象。
 - MCP `get_audit_logs({ limit?: 1..500 })`：读取持久化审计记录，重启后仍可查看后台失败原因。
+
+## 序列化边界
+
+每条完整日志在写入 history 或通过 `runtime:log` 发送前，都会投影成可 JSON 序列化的普通值。undefined、函数、symbol、BigInt、循环引用、抛错 getter 和原型键均会在 Electron IPC 前归一化。

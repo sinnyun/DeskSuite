@@ -1,13 +1,14 @@
 import type { RendererPlugin } from './types'
+export { errorText } from './error-text'
 
 export * from './types'
-export { useLayout } from './layout'
+export { useLayout, useLayoutShallow } from './layout'
 export { useTheme } from './theme'
 export { SlotRenderer, useContributions } from './slot-context'
 export { getService, listServiceNames } from './services'
 export { useLogs, log, logStore } from './logs'
 export type { LogCategory, LogEntry, LogInput, LogLevel } from './logs'
-export { call, callWithTrace } from './bridge-api'
+export { call, callWithTrace, callValidated, callValidatedWithTrace } from './bridge-api'
 export { useRuntimeBridge } from './runtime'
 export { useUiKit } from './ui-kit'
 export type {

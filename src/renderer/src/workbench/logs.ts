@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from 'react'
+import { useStore } from 'zustand'
+import { createStore } from 'zustand/vanilla'
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'event' | 'lifecycle'
 export type LogCategory = 'action' | 'transfer' | 'processing' | 'result' | 'system'
@@ -80,23 +81,21 @@ function stamp(): string {
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}.${String(now.getMilliseconds()).padStart(3, '0')}`
 }
 
-class LogStore {
-  private entries: LogEntry[] = []
-  private ids = new Set<string>()
-  private listeners = new Set<() => void>()
-  private seq = 0
+interface LogState {
+  entries: LogEntry[]
+  push: (input: LogInput) => void
+  clear: () => void
+}
 
-  getSnapshot = (): LogEntry[] => this.entries
+const ids = new Set<string>()
+let seq = 0
 
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
-
-  push(input: LogInput): void {
-    const id = input.id ?? `ui-${Date.now()}-${this.seq++}`
-    if (this.ids.has(id)) return
-    this.ids.add(id)
+const logStateStore = createStore<LogState>((set, get) => ({
+  entries: [],
+  push(input) {
+    const id = input.id ?? `ui-${Date.now()}-${seq++}`
+    if (ids.has(id)) return
+    ids.add(id)
     const entry: LogEntry = {
       id,
       timestamp: input.timestamp ?? stamp(),
@@ -111,25 +110,23 @@ class LogStore {
       durationMs: input.durationMs,
       status: input.status
     }
-    this.entries = [entry, ...this.entries].slice(0, MAX_ENTRIES)
-    if (this.entries.length === MAX_ENTRIES) {
-      this.ids = new Set(this.entries.map((item) => item.id))
+    const entries = [entry, ...get().entries].slice(0, MAX_ENTRIES)
+    if (entries.length === MAX_ENTRIES) {
+      ids.clear()
+      for (const item of entries) ids.add(item.id)
     }
-    this.emit()
+    set({ entries })
+  },
+  clear() {
+    ids.clear()
+    set({ entries: [] })
   }
+}))
 
-  clear = (): void => {
-    this.entries = []
-    this.ids.clear()
-    this.emit()
-  }
-
-  private emit(): void {
-    for (const listener of this.listeners) listener()
-  }
+export const logStore = {
+  push: (input: LogInput): void => logStateStore.getState().push(input),
+  clear: (): void => logStateStore.getState().clear()
 }
-
-export const logStore = new LogStore()
 
 export function log(
   level: LogLevel,
@@ -144,5 +141,5 @@ export function log(
 }
 
 export function useLogs(): LogEntry[] {
-  return useSyncExternalStore(logStore.subscribe, logStore.getSnapshot)
+  return useStore(logStateStore, (state) => state.entries)
 }

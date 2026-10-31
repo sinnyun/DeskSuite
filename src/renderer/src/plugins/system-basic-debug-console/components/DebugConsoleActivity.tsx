@@ -1,10 +1,10 @@
 import type { ReactElement } from 'react'
 import { Terminal } from 'lucide-react'
-import { useLayout, useLogs, useUiKit } from '../../../workbench/sdk'
+import { useLayoutShallow, useLogs, useUiKit } from '../../../workbench/sdk'
 
 export function DebugConsoleActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { activeFloatingPanel, toggleFloatingPanel } = useLayout()
+  const { activeFloatingPanel, toggleFloatingPanel } = useLayoutShallow((state) => ({ activeFloatingPanel: state.activeFloatingPanel, toggleFloatingPanel: state.toggleFloatingPanel }))
   const logs = useLogs()
   const active = activeFloatingPanel === 'debug-console'
 

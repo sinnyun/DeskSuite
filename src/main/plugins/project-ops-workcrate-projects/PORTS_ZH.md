@@ -75,7 +75,7 @@ DTO：
 
 - 最近工程索引：`<userData>/data/workcrate/recent.json`，由主进程 `store` 管理并使用原子写入和版本信封。
 - 新工程最初创建在 `<userData>/data/workcrate/projects/<uuid>/`。用户明确创建/关联原生文档后，可把插件拥有的数据重定位至 `<所选目录>/.workcrate/<uuid>/`；索引保存工程数据绝对位置。
-- 工程数据为版本化 `project.json`，预览位于 `previews/`。JSON 通过同目录临时文件写入并保留失败恢复备份。重定位先复制到临时同级目录并验证 ID，再原子发布、更新定位索引，最后清理旧的插件数据。
+- 工程数据为版本化 `project.json`，读写均限制为 16 MiB 并经过 schema 校验；预览位于 `previews/`。JSON 通过同目录临时文件写入并保留失败恢复备份。重定位先复制到临时同级目录并验证 ID，再原子发布、更新定位索引，最后清理旧的插件数据。
 - 复制、重定位、重新打开便携目录和删除前，会校验工程文档及所有登记预览的摘要；递归复制遇到符号链接或重解析点时会报错，不会静默漏掉工程数据。
 - `openProjectFolder` 仅检查用户指定目录内的 `.workcrate/<uuid>/`，完整验证候选项目后才更新索引；不扫描磁盘。
 - 删除先把插件拥有的数据复制到 `<userData>/data/workcrate/trash/`，再移除已登记工程目录。外部引用源文件和已关联原生文档永不由本插件删除或移动。
@@ -98,11 +98,13 @@ DTO：
 
 所有 mutating 工具还服从已配置的 MCP 访问等级（standard 或 full；高影响要求 full）。`confirm: true` 是额外的单次调用要求。引用、预览、关联、删除和重定位工具不会写入源文件或原生文档；重定位仅移动 WorkCrate 自有工程数据。
 
+MCP handler 错误统一经主进程共享 formatter 限长并遮蔽本机路径/凭据，同时保持标准 MCP error result 结构。
+
 Boards 插件拥有原生文档/画板数据及官方 VectorCraft CLI 调用；Projects 仅保存用户明确建立的文档关联和 binding UUID。
 
 ## 物料基础信息
 
-IPC `workcrateProjects` 提供 `getProgramPresets()`、`saveProgramPresets(presets)` 和 `effectivePresets(projectId?)`。MCP 提供 `workcrate_program_presets_get()`、`workcrate_program_presets_save({ presets, confirm: true })`；保存需要写权限，经校验和去重后完整替换字段列表，并广播 `workcrateProjects:changed`。
+IPC `workcrateProjects` 提供 `list(includeArchived?)`、`getProgramPresets()`、`saveProgramPresets(presets)` 和 `effectivePresets(projectId?)`；工程 ID 省略或为 null 时使用程序默认值。MCP 提供 `workcrate_program_presets_get()`、`workcrate_program_presets_save({ presets, confirm: true })`；保存需要写权限，经校验和去重后完整替换字段列表，并广播 `workcrateProjects:changed`。
 
 首次初始化时，recent.json 中的 `materialDefaultsVersion` 升为 1；补齐缺失的 9 类字段、83 个选项：物料类别、物料名称、尺寸标签、尺寸、数量、材质、制作工艺、颜色、安装方式。已有同键字段及选项不覆盖；后续主动删除或清空的内容在重启后也不会重新填入。基础信息不自动覆盖工程物料值。
 

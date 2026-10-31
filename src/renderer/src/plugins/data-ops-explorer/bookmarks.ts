@@ -1,4 +1,5 @@
-import { call, callWithTrace, getService } from '../../workbench/sdk'
+import { call, callValidated, callWithTrace, errorText, getService } from '../../workbench/sdk'
+import { bookmarkGroupsSchema } from './bookmark-schema'
 import { explorerStore, type ExplorerViewMode } from './store'
 import { explorerPanes } from './panes'
 
@@ -7,7 +8,7 @@ export interface BookmarkGroup {
   name: string
   items: Array<{ id: string; name: string; path: string }>
 }
-export const bookmarkAction = (args: Record<string, unknown>): Promise<BookmarkGroup[]> => call('quickBookmarks', 'act', args)
+export const bookmarkAction = (args: Record<string, unknown>): Promise<BookmarkGroup[]> => callValidated(bookmarkGroupsSchema, 'quickBookmarks', 'act', args)
 
 export async function addSelectedBookmarks(groupId: string): Promise<BookmarkGroup[]> {
   const state = explorerStore.getState()
@@ -27,7 +28,7 @@ export async function openBookmark(groupId: string, itemId: string): Promise<voi
 export function startBookmarkBridge(): () => void {
   return window.bridge.onEvent((channel, payload, traceId) => {
     if (channel !== 'quickBookmarks:explorer') return
-    const args = payload as { id: string; action: string; viewMode?: ExplorerViewMode; groupingEnabled?: boolean; groupBy?: 'kind' | 'modifiedMinute' | 'rating' | 'folder'; includeChildren?: boolean; path?: string; paths?: string[]; groupId: string; itemId: string }
+    const args = payload as { id: string; action: string; viewMode?: ExplorerViewMode; groupingEnabled?: boolean; groupBy?: 'kind' | 'modifiedMinute' | 'rating' | 'folder'; includeChildren?: boolean; layout?: 1 | 2 | 4; paneId?: string; path?: string; paths?: string[]; groupId: string; itemId: string }
     void (async () => {
       try {
         await explorerPanes.initialize()
@@ -44,6 +45,18 @@ export function startBookmarkBridge(): () => void {
           value = { viewMode: state.viewMode, groupingEnabled: state.groupingEnabled, groupOptions: grouped?.getOptions() }
 
         }
+        if (args.action === 'layout') {
+          if (args.layout !== 1 && args.layout !== 2 && args.layout !== 4) throw new Error('工作区列数仅支持 1、2 或 4')
+          await explorerPanes.setLayout(args.layout)
+          const snapshot = explorerPanes.getSnapshot()
+          value = { layout: snapshot.layout, activePaneId: snapshot.activePaneId, paneIds: snapshot.panes.map((pane) => pane.id) }
+        }
+        if (args.action === 'pane') {
+          if (!args.paneId) throw new Error('切换窗格需要 paneId')
+          explorerPanes.setActivePane(args.paneId)
+          const snapshot = explorerPanes.getSnapshot()
+          value = { layout: snapshot.layout, activePaneId: snapshot.activePaneId, paneIds: snapshot.panes.map((pane) => pane.id) }
+        }
         if (args.action === 'navigate') {
           await explorerStore.load(args.path!, undefined, 0, 0, traceId)
           if (explorerStore.getState().status === 'error') throw new Error(explorerStore.getState().error ?? '打开失败')
@@ -59,8 +72,9 @@ export function startBookmarkBridge(): () => void {
         if (traceId) await callWithTrace(traceId, 'quickBookmarks', 'complete', args.id, { value: value ?? null })
         else await call('quickBookmarks', 'complete', args.id, { value: value ?? null })
       } catch (error) {
-        if (traceId) await callWithTrace(traceId, 'quickBookmarks', 'complete', args.id, { error: String(error) })
-        else await call('quickBookmarks', 'complete', args.id, { error: String(error) })
+        const message = errorText(error, '收藏操作失败')
+        if (traceId) await callWithTrace(traceId, 'quickBookmarks', 'complete', args.id, { error: message })
+        else await call('quickBookmarks', 'complete', args.id, { error: message })
       }
     })()
   })

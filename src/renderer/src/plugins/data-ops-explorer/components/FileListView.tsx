@@ -14,7 +14,7 @@ import {
   explorerStore,
   hasActiveFilters,
   useCurrentExplorerStore,
-  useExplorer,
+  useExplorerShallow,
   visibleEntries,
   type FsEntry,
   type SortField
@@ -63,7 +63,7 @@ function useListColumns(): [(node: HTMLDivElement | null) => void, ListColumns] 
 
 function SortHeader({ field, label, className }: { field: SortField; label: string; className: string }): ReactElement {
   const { DesktopButton } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({ sortField: s.sortField, sortOrder: s.sortOrder }))
   const active = state.sortField === field
   return (
     <DesktopButton
@@ -169,7 +169,12 @@ function Row({
 
 export function FileListView({ entries: suppliedEntries, embedded = false }: { entries?: FsEntry[]; embedded?: boolean } = {}): ReactElement {
   const { DesktopButton, DesktopIconButton } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({
+    entries: s.entries, search: s.search, kindFilter: s.kindFilter, favoriteOnly: s.favoriteOnly,
+    minRating: s.minRating, tagFilter: s.tagFilter, sortField: s.sortField, sortOrder: s.sortOrder,
+    path: s.path, tagFocus: s.tagFocus, selectedPaths: s.selectedPaths, scrollAnchor: s.scrollAnchor,
+    status: s.status, error: s.error, focusedPath: s.focusedPath
+  }))
   const paneStore = useCurrentExplorerStore()
   const entries = suppliedEntries ?? visibleEntries(state)
   const allSelected = entries.length > 0 && entries.every(entry => state.selectedPaths.includes(entry.path))

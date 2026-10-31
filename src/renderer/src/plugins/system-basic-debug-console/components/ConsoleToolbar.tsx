@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import { Copy, Download, Trash2 } from 'lucide-react'
 import {
   call,
+  errorText,
   log,
   logStore,
   useLogs,
@@ -40,7 +41,7 @@ export function ConsoleToolbar(): ReactElement {
       await call('clipboard', 'writeText', serialize(filtered))
       log('event', 'DebugConsole', `已复制 ${filtered.length} 条日志到剪贴板`)
     } catch (error) {
-      log('error', 'DebugConsole', '复制日志失败', String(error))
+      log('error', 'DebugConsole', '复制日志失败', errorText(error, '日志复制失败'))
     }
   }
 
@@ -59,7 +60,7 @@ export function ConsoleToolbar(): ReactElement {
       )
       if (saved) log('event', 'DebugConsole', `已导出 ${filtered.length} 条日志：${saved}`)
     } catch (error) {
-      log('error', 'DebugConsole', '导出日志失败', String(error))
+      log('error', 'DebugConsole', '导出日志失败', errorText(error, '日志导出失败'))
     }
   }
 

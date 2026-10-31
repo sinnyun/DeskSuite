@@ -1,4 +1,5 @@
 import { logStore } from './logs'
+import { errorText } from './error-text'
 
 export async function call<T = unknown>(
   service: string,
@@ -33,7 +34,7 @@ export async function callWithTrace<T = unknown>(
     })
     return result
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorText(error, 'IPC 调用失败')
     logStore.push({
       id: `${callId}:receive`, level: 'error', source: 'Renderer',
       message: `IPC ${service}.${method} 调用失败`, payload: { error: message },
@@ -42,4 +43,36 @@ export async function callWithTrace<T = unknown>(
     })
     throw error
   }
+}
+
+export interface RuntimeDecoder<T> {
+  safeParse(value: unknown): { success: true; data: T } | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } }
+}
+
+export async function callValidated<T>(
+  decoder: RuntimeDecoder<T>,
+  service: string,
+  method: string,
+  ...args: unknown[]
+): Promise<T> {
+  return callValidatedWithTrace(decoder, `ui-${crypto.randomUUID()}`, service, method, ...args)
+}
+
+export async function callValidatedWithTrace<T>(
+  decoder: RuntimeDecoder<T>,
+  traceId: string,
+  service: string,
+  method: string,
+  ...args: unknown[]
+): Promise<T> {
+  const result = await callWithTrace<unknown>(traceId, service, method, ...args)
+  const parsed = decoder.safeParse(result)
+  if (parsed.success) return parsed.data
+  const errors = parsed.error.issues.map((issue) => ({ path: issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number'), message: issue.message }))
+  const message = `IPC 返回值校验失败：${service}.${method}`
+  logStore.push({
+    level: 'error', source: 'Renderer', message, payload: { errors },
+    tags: ['ipc', service, 'validation'], category: 'result', traceId, phase: '返回值校验', status: 'error'
+  })
+  throw new Error(`${message} (${errors.map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`).join('; ')})`)
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { call } from '../../workbench/sdk'
+import { callValidated, errorText } from '../../workbench/sdk'
+import { imagePreviewSchema, mediaPreviewSchema, textPreviewSchema } from './schema'
 import type { FsEntry } from './store'
 
 export type PreviewState =
@@ -30,30 +31,32 @@ export function usePreview(entry: FsEntry | undefined): PreviewState {
     setPreview({ status: 'loading' })
 
     if (entry.kind === 'image') {
-      call<{ dataUrl: string }>('filesystem', 'readImage', entry.path)
+      callValidated(imagePreviewSchema, 'filesystem', 'readImage', entry.path)
         .then((result) => {
-          if (alive) setPreview({ status: 'image', dataUrl: result.dataUrl })
+          if (alive && result.path === entry.path) setPreview({ status: 'image', dataUrl: result.dataUrl })
+          else if (alive) setPreview({ status: 'unsupported', message: '预览响应与所选文件不匹配' })
         })
         .catch((error) => {
-          if (alive) setPreview({ status: 'unsupported', message: String(error) })
+          if (alive) setPreview({ status: 'unsupported', message: errorText(error, '无法读取图片预览') })
         })
     } else if (MEDIA_KINDS.has(entry.kind)) {
-      call<{ dataUrl: string; mimeType: string }>('filesystem', 'readMedia', entry.path)
+      callValidated(mediaPreviewSchema, 'filesystem', 'readMedia', entry.path)
         .then((result) => {
-          if (alive) setPreview({ status: 'media', ...result })
+          if (alive && result.path === entry.path) setPreview({ status: 'media', dataUrl: result.dataUrl, mimeType: result.mimeType })
+          else if (alive) setPreview({ status: 'unsupported', message: '预览响应与所选文件不匹配' })
         })
         .catch((error) => {
-          if (alive) setPreview({ status: 'unsupported', message: String(error) })
+          if (alive) setPreview({ status: 'unsupported', message: errorText(error, '无法读取媒体预览') })
         })
     } else if (TEXT_KINDS.has(entry.kind)) {
-      call<{ content: string; truncated: boolean }>('filesystem', 'readText', entry.path)
+      callValidated(textPreviewSchema, 'filesystem', 'readText', entry.path)
         .then((result) => {
-          if (alive) {
+          if (alive && result.path === entry.path) {
             setPreview({ status: 'text', content: result.content, truncated: result.truncated })
-          }
+          } else if (alive) setPreview({ status: 'unsupported', message: '预览响应与所选文件不匹配' })
         })
         .catch((error) => {
-          if (alive) setPreview({ status: 'unsupported', message: String(error) })
+          if (alive) setPreview({ status: 'unsupported', message: errorText(error, '无法读取文本预览') })
         })
     } else {
       setPreview({ status: 'unsupported', message: '该类型文件不支持内联预览' })

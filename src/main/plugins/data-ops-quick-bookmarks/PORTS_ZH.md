@@ -6,7 +6,7 @@
 - 写入串行原子执行，失败不保存；只接受绝对路径及实际存在的文件夹，同组地址去重（Windows 不区分大小写），不同分组可收藏相同路径。最多 100 组、每组 1000 项、名称 120 字符。
 - IPC `quickBookmarks.complete(requestId, { value?, error? })`：应答渲染层操作。
 - MCP `quick_bookmarks`：参数同 act；低影响写操作，只改收藏引用，不删除真实文件。
-- MCP `quick_bookmarks_explorer({ action: navigate | select | addSelected | open, path?, paths?, groupId?, itemId? })`：通过事件请求操作活动文件窗格，15 秒超时。select 验证目录中的选择项，addSelected 只收藏所选文件夹，open 解析并打开收藏。
+- MCP `quick_bookmarks_explorer({ action: navigate | select | addSelected | open | view | layout | pane, path?, paths?, groupId?, itemId?, viewMode?, groupingEnabled?, groupBy?, includeChildren?, layout?, paneId? })`：通过事件操作活动文件窗格，15 秒超时。select 验证目录中的选择项；layout 支持 1/2/4 栏，pane 切换活动窗格；不直接写文件。
 - 事件 `quickBookmarks:changed` 通知刷新，`quickBookmarks:explorer` 携带操作请求及 ID。
 - 持久化：Store quick-bookmarks 文档，随 userData 隔离。删除所有分组后重启保持空列表。失效地址仍保留，打开时显示错误供用户编辑或移除。
 

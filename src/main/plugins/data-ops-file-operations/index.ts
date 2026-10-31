@@ -2,10 +2,11 @@ import { app, dialog, shell } from 'electron'
 import type { Context, Plugin } from 'cordis'
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { basename, dirname, extname, join, relative, sep } from 'node:path'
+import { basename, dirname, extname, join, sep } from 'node:path'
 import { z } from 'zod'
 import { assertWritable, identity, isInside, normalize, samePath } from '../../services/paths'
-import { mcpError, mcpText } from '../../services/mcp'
+import { errorMessage, mcpError, mcpText } from '../../services/mcp'
+import { rebindVersionEntityPaths } from './version-rebind'
 
 type Operation = 'copy' | 'move' | 'rename' | 'mkdir' | 'trash' | 'writeText'
 type ConflictPolicy = 'skip' | 'overwrite' | 'rename' | 'cancel'
@@ -96,23 +97,64 @@ const RESULT_PREFIX = 'file-operations.job-'
 const PLAN_TTL_MS = 5 * 60_000
 const APPROVAL_TIMEOUT_MS = 60_000
 const itemResultSchema = z.object({
-  source: z.string().optional(), target: z.string(), status: z.enum(['completed', 'skipped', 'conflict', 'failed', 'stale']), message: z.string().optional()
-})
+  source: z.string().optional(), target: z.string().min(1), status: z.enum(['completed', 'skipped', 'conflict', 'failed', 'stale']), message: z.string().optional()
+}).passthrough()
+const operationSchema = z.enum(['copy', 'move', 'rename', 'mkdir', 'trash', 'writeText'])
+const conflictPolicySchema = z.enum(['skip', 'overwrite', 'rename', 'cancel'])
+const fingerprintSchema = z.object({
+  size: z.number().finite().nonnegative(), mtimeMs: z.number().finite(), mode: z.number().int().nonnegative(), dev: z.number().finite(),
+  isDirectory: z.boolean(), isSymbolicLink: z.boolean()
+}).passthrough()
+const plannedItemSchema = z.object({
+  source: z.string().optional(), target: z.string().min(1),
+  sourceFingerprint: fingerprintSchema.optional(), targetFingerprint: fingerprintSchema.nullable(),
+  status: z.enum(['completed', 'skipped', 'conflict', 'failed', 'stale']).optional(), message: z.string().optional()
+}).passthrough()
+const publicPlanSchema = z.object({
+  planId: z.string().min(1), op: operationSchema, sources: z.array(z.string()), target: z.string().optional(),
+  conflictPolicy: conflictPolicySchema, createdAt: z.number().finite().nonnegative(), expiresAt: z.number().finite().nonnegative(),
+  items: z.array(plannedItemSchema)
+}).passthrough()
+const approvalSummarySchema = z.object({
+  planId: z.string().min(1), op: operationSchema, count: z.number().int().nonnegative(), conflictCount: z.number().int().nonnegative(),
+  bytes: z.number().finite().nonnegative(), target: z.string().optional(), items: z.array(plannedItemSchema)
+}).passthrough()
+const undoEntrySchema = z.object({
+  undoId: z.string().min(1), op: z.enum(['move', 'rename', 'mkdir']), source: z.string().optional(), target: z.string().min(1),
+  createdAt: z.number().finite().nonnegative()
+}).passthrough()
+const undoStackSchema = undoEntrySchema.array()
+const operationDoneSchema = z.object({
+  planId: z.string().min(1), jobId: z.string().min(1), results: z.array(itemResultSchema), error: z.string().optional()
+}).passthrough()
+const changedPathSchema = z.object({ source: z.string().optional(), target: z.string().min(1) }).passthrough()
+const fileOpsChangedSchema = z.object({
+  planId: z.string().min(1), jobId: z.string().min(1), paths: z.array(changedPathSchema), at: z.number().finite().nonnegative()
+}).passthrough()
+const fsChangedSchema = z.object({
+  dirs: z.array(z.string()), paths: z.array(z.string()), invalidate: z.boolean(), planId: z.string().min(1), jobId: z.string().min(1), at: z.number().finite().nonnegative()
+}).passthrough()
+const jobIdResultSchema = z.object({ jobId: z.string().min(1) }).passthrough()
+const booleanResultSchema = z.boolean()
+const stringListSchema = z.array(z.string())
+const undoResultSchema = z.object({
+  jobId: z.string().min(1).optional(), undoId: z.string().min(1).optional(), status: z.enum(['stale', 'conflict']).optional(), message: z.string().optional()
+}).passthrough()
 const savedJobSchema = z.object({
-  jobId: z.string(), planId: z.string(), op: z.enum(['copy', 'move', 'rename', 'mkdir', 'trash', 'writeText']),
-  results: z.array(itemResultSchema), savedAt: z.number()
-})
+  jobId: z.string().min(1), planId: z.string(), op: operationSchema,
+  results: z.array(itemResultSchema), savedAt: z.number().finite().nonnegative()
+}).passthrough()
 
 const planInput = z.object({
   op: z.enum(['copy', 'move', 'rename', 'mkdir', 'trash']),
-  sources: z.array(z.string()).default([]),
-  target: z.string().optional(),
+  sources: z.array(z.string().min(1).max(32768)).max(1000).default([]),
+  target: z.string().max(32768).optional(),
   conflictPolicy: z.enum(['skip', 'overwrite', 'rename', 'cancel']).default('cancel')
 })
 const MAX_TEXT_WRITE_BYTES = 10 * 1024 * 1024
 
 function toMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorMessage(error, '文件操作失败')
 }
 
 function fingerprint(stat: Awaited<ReturnType<typeof fs.lstat>>): Fingerprint {
@@ -175,7 +217,7 @@ function broadcastChangedDirectories(
 ): void {
   const paths = [...new Set(changed.flatMap(({ source, target }) => [source, target].filter((path): path is string => Boolean(path))))]
   const dirs = [...new Set(paths.map((path) => dirname(path)))]
-  ctx.ipc.broadcast('fs:changed', { dirs, paths, invalidate: paths.length > 200, planId, jobId, at: Date.now() })
+  ctx.ipc.broadcast('fs:changed', fsChangedSchema.parse({ dirs, paths, invalidate: paths.length > 200, planId, jobId, at: Date.now() }))
 }
 
 const fileOperationsPlugin: Plugin = {
@@ -379,7 +421,7 @@ const fileOperationsPlugin: Plugin = {
     }
 
     function publicPlan(plan: FilePlan): Omit<FilePlan, 'approved' | 'rejected' | 'origin'> {
-      return {
+      return publicPlanSchema.parse({
         planId: plan.planId,
         op: plan.op,
         sources: plan.sources,
@@ -388,7 +430,7 @@ const fileOperationsPlugin: Plugin = {
         createdAt: plan.createdAt,
         expiresAt: plan.expiresAt,
         items: plan.items
-      }
+      })
     }
 
     function releaseApproval(planId: string, result: boolean | null): void {
@@ -441,7 +483,7 @@ const fileOperationsPlugin: Plugin = {
       const bytes = plan.op === 'writeText'
         ? Buffer.byteLength(plan.content ?? '', 'utf8')
         : plan.items.reduce((sum, item) => sum + (item.sourceFingerprint?.size ?? 0), 0)
-      return { planId: plan.planId, op: plan.op, count: plan.items.length, conflictCount, bytes, target: plan.target, items: plan.items }
+      return approvalSummarySchema.parse({ planId: plan.planId, op: plan.op, count: plan.items.length, conflictCount, bytes, target: plan.target, items: plan.items })
     }
 
     async function prepareMcpApproval(plan: FilePlan): Promise<'approved' | 'rejected' | 'pending'> {
@@ -600,23 +642,19 @@ const fileOperationsPlugin: Plugin = {
                       }
                       try {
                         const source = normalize(item.source!)
-                        const movedEntities = ctx.db.all<{ path: string }>('SELECT path FROM version_entities')
-                          .filter(({ path }) => samePath(path, source) || (item.sourceFingerprint?.isDirectory === true && isInside(source, path)))
-                        const versionWarnings: string[] = []
-                        for (const entity of movedEntities) {
-                          const targetPath = samePath(entity.path, source)
-                            ? normalize(destination)
-                            : normalize(join(destination, relative(source, entity.path)))
-                          try {
-                            ctx.versionInfo.rebindPath(entity.path, targetPath)
-                          } catch (error) {
-                            versionWarnings.push(`${entity.path}: ${toMessage(error)}`)
-                          }
-                        }
-                        if (versionWarnings.length) {
-                          const note = `文件已操作，但 ${versionWarnings.length} 条 Lore 历史路径关联未更新`
+                        const rebound = rebindVersionEntityPaths(
+                          ctx.db,
+                          source,
+                          destination,
+                          item.sourceFingerprint?.isDirectory === true,
+                          (oldPath, newPath) => ctx.versionInfo.rebindPath(oldPath, newPath),
+                          toMessage,
+                          { isInside, normalize, samePath }
+                        )
+                        if (rebound.failed) {
+                          const note = `文件已操作，但 ${rebound.failed} 条 Lore 历史路径关联未更新`
                           syncWarning = syncWarning ? `${syncWarning}；${note}` : note
-                          ctx.audit.record({ origin: plan.origin, tool: 'fileOps.version-rebind', allowed: false, planId, error: versionWarnings.slice(0, 8).join('\n') })
+                          ctx.audit.record({ origin: plan.origin, tool: 'fileOps.version-rebind', allowed: false, planId, error: rebound.warningSamples.join('\n') })
                         }
                       } catch (error) {
                         const note = `文件已操作，但 Lore 历史路径关联查询失败：${toMessage(error)}`
@@ -648,16 +686,16 @@ const fileOperationsPlugin: Plugin = {
               job.progress(index + 1, item.source ?? item.target)
             }
           }
-          const saved: SavedJobResult = { jobId: job.id, planId, op: plan.op, results, savedAt: Date.now() }
+          const saved: SavedJobResult = savedJobSchema.parse({ jobId: job.id, planId, op: plan.op, results, savedAt: Date.now() })
           const resultKey = registerResultDocument(job.id, saved)
           await ctx.store.write(resultKey, saved)
           const summary = { results: results.length, completed: results.filter((r) => r.status === 'completed').length, failed: results.filter((r) => r.status === 'failed').length }
           job.finish(summary)
-          ctx.ipc.broadcast('fileOps:done', { planId, jobId: job.id, results })
+          ctx.ipc.broadcast('fileOps:done', operationDoneSchema.parse({ planId, jobId: job.id, results }))
           const changedPaths = results.filter((result) => result.status === 'completed')
             .map(({ source, target }) => ({ source, target }))
           setTimeout(() => {
-            ctx.ipc.broadcast('fileOps:fs-changed', { planId, jobId: job.id, paths: changedPaths, at: Date.now() })
+            ctx.ipc.broadcast('fileOps:fs-changed', fileOpsChangedSchema.parse({ planId, jobId: job.id, paths: changedPaths, at: Date.now() }))
             broadcastChangedDirectories(ctx, changedPaths, planId, job.id)
           }, 200)
           ctx.audit.record({ origin: plan.origin, tool: 'fileOps.execute', planId, results })
@@ -672,17 +710,17 @@ const fileOperationsPlugin: Plugin = {
           }
         } catch (error) {
           job.fail(error)
-          ctx.ipc.broadcast('fileOps:done', {
+          ctx.ipc.broadcast('fileOps:done', operationDoneSchema.parse({
             planId,
             jobId: job.id,
             results,
             error: toMessage(error)
-          })
+          }))
           const changedPaths = results.filter((result) => result.status === 'completed')
             .map(({ source, target }) => ({ source, target }))
           if (changedPaths.length > 0) {
             setTimeout(() => {
-              ctx.ipc.broadcast('fileOps:fs-changed', { planId, jobId: job.id, paths: changedPaths, at: Date.now() })
+              ctx.ipc.broadcast('fileOps:fs-changed', fileOpsChangedSchema.parse({ planId, jobId: job.id, paths: changedPaths, at: Date.now() }))
               broadcastChangedDirectories(ctx, changedPaths, planId, job.id)
             }, 200)
           }
@@ -704,7 +742,7 @@ const fileOperationsPlugin: Plugin = {
       const snapshot = undoStack
         .map(({ undoId, op, source, target, createdAt }) => ({ undoId, op, source, target, createdAt }))
         .sort((a, b) => b.createdAt - a.createdAt)
-      ctx.ipc.broadcast('fileOps:undo-stack', snapshot)
+      ctx.ipc.broadcast('fileOps:undo-stack', undoStackSchema.parse(snapshot))
     }
 
     async function undo(undoId?: string): Promise<{ jobId?: string; undoId?: string; status?: 'stale' | 'conflict'; message?: string }> {
@@ -791,9 +829,9 @@ const fileOperationsPlugin: Plugin = {
         const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options)
         return result.canceled || !result.filePath ? null : publicPlan(await buildTextWritePlan(result.filePath, content))
       },
-      approve: (planId: string) => authorizeUi(planId, true),
-      reject: (planId: string) => authorizeUi(planId, false),
-      execute: (planId: string) => execute(planId),
+      approve: (planId: string) => booleanResultSchema.parse(authorizeUi(planId, true)),
+      reject: (planId: string) => booleanResultSchema.parse(authorizeUi(planId, false)),
+      execute: async (planId: string) => jobIdResultSchema.parse(await execute(planId)),
       cancel: (planIdOrJobId: string) => {
         const plan = plans.get(planIdOrJobId)
         if (plan) {
@@ -804,9 +842,9 @@ const fileOperationsPlugin: Plugin = {
             ctx.audit.record({ origin: 'mcp', tool: 'fileOps.approval', allowed: false, planId: plan.planId, error: 'canceled' })
           }
           const runningJobId = jobByPlan.get(planIdOrJobId)
-          return runningJobId ? ctx.jobs.cancel(runningJobId) : true
+          return booleanResultSchema.parse(runningJobId ? ctx.jobs.cancel(runningJobId) : true)
         }
-        return ctx.jobs.cancel(planIdOrJobId)
+        return booleanResultSchema.parse(ctx.jobs.cancel(planIdOrJobId))
       },
       get: (planId: string) => {
         expirePlan(planId)
@@ -816,13 +854,13 @@ const fileOperationsPlugin: Plugin = {
       getResults: async () => {
         await resultsReady
         const results = await Promise.all(registeredResultKeys.map((key) => ctx.store.read<SavedJobResult>(key)))
-        return results.sort((a, b) => b.savedAt - a.savedAt).slice(0, 50)
+        return savedJobSchema.array().parse(results.sort((a, b) => b.savedAt - a.savedAt).slice(0, 50))
       },
-      getWriteRoots: () => [...allowedRoots()],
-      undo,
-      getUndoStack: () => undoStack
+      getWriteRoots: () => stringListSchema.parse([...allowedRoots()]),
+      undo: async (undoId?: string) => undoResultSchema.parse(await undo(undoId)),
+      getUndoStack: () => undoStackSchema.parse(undoStack
         .map(({ undoId, op, source, target, createdAt }) => ({ undoId, op, source, target, createdAt }))
-        .sort((a, b) => b.createdAt - a.createdAt),
+        .sort((a, b) => b.createdAt - a.createdAt)),
       startDrag: async (paths: string[]) => {
         if (!Array.isArray(paths) || paths.length === 0) throw new Error('拖出至少需要一个文件')
         const checked = paths.map((path) => normalize(path))
@@ -830,13 +868,35 @@ const fileOperationsPlugin: Plugin = {
         if (!win) throw new Error('没有可用的应用窗口')
         const icon = await app.getFileIcon(checked[0], { size: 'normal' })
         win.webContents.startDrag({ file: checked[0], files: checked, icon })
-        return true
+        return booleanResultSchema.parse(true)
       }
+    }, {
+      plan: z.tuple([planInput]),
+      writeText: z.tuple([
+        z.string().trim().min(1).max(32768),
+        z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_TEXT_WRITE_BYTES, '文本超过 10MB 上限'),
+        z.object({ noOverwrite: z.boolean().optional() }).optional()
+      ]),
+      saveText: z.tuple([
+        z.string().max(255),
+        z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_TEXT_WRITE_BYTES, '文本超过 10MB 上限'),
+        z.string().regex(/^\.?[a-zA-Z0-9_-]{1,16}$/).optional()
+      ]),
+      approve: z.tuple([z.string().min(1).max(128)]),
+      reject: z.tuple([z.string().min(1).max(128)]),
+      execute: z.tuple([z.string().min(1).max(128)]),
+      cancel: z.tuple([z.string().min(1).max(128)]),
+      get: z.tuple([z.string().min(1).max(128)]),
+      getResults: z.tuple([]),
+      getWriteRoots: z.tuple([]),
+      undo: z.tuple([z.string().min(1).max(128).optional()]),
+      getUndoStack: z.tuple([]),
+      startDrag: z.tuple([z.array(z.string().min(1).max(32768)).min(1).max(1000)])
     })
 
     const commandFields = {
-      sources: z.array(z.string()).min(1),
-      target: z.string(),
+      sources: z.array(z.string().min(1).max(32768)).min(1).max(1000),
+      target: z.string().max(32768),
       conflictPolicy: z.enum(['skip', 'overwrite', 'rename', 'cancel']).optional()
     }
     const commandDefinitions = [

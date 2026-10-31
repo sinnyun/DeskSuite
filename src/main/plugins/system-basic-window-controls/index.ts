@@ -1,4 +1,5 @@
 import type { Context, Plugin } from 'cordis'
+import { z } from 'zod'
 
 interface WindowState {
   maximized: boolean
@@ -44,6 +45,12 @@ const windowControlsPlugin: Plugin = {
         return true
       },
       state: () => readState()
+    }, {
+      minimize: z.tuple([]),
+      toggleMaximize: z.tuple([]),
+      close: z.tuple([]),
+      reload: z.tuple([]),
+      state: z.tuple([])
     })
 
     ctx.effect(() => {

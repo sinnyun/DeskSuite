@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactElement } from 'react'
 import { AppWindow, Archive, Boxes, Grid2X2, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
-import { call, useLayout, useUiKit } from '../../workbench/sdk'
+import { call, callValidated, errorText, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import { LauncherEntriesSchema, LauncherGroupsSchema, LauncherIconSchema, LauncherSummarySchema } from './schemas'
 
 interface LauncherGroup { id: string; name: string; createdAt: number }
 interface LauncherSummary { total: number; applications: number; shortcuts: number; groupCounts: Record<string, number> }
@@ -30,7 +31,7 @@ function LauncherIcon({ entry, className = 'h-9 w-9' }: { entry: LauncherEntry; 
     if (!node) return
     let alive = true
     const load = (): void => {
-      void call<string | null>('launcher', 'icon', entry.id).then((value) => { iconCache.set(entry.id, value); if (alive) setIcon(value) }).catch(() => { iconCache.set(entry.id, null) })
+      void callValidated(LauncherIconSchema, 'launcher', 'icon', entry.id).then((value) => { iconCache.set(entry.id, value); if (alive) setIcon(value) }).catch(() => { iconCache.set(entry.id, null) })
     }
     if (typeof IntersectionObserver === 'undefined') load()
     else {
@@ -45,7 +46,7 @@ function LauncherIcon({ entry, className = 'h-9 w-9' }: { entry: LauncherEntry; 
 
 export function LauncherPanel(): ReactElement | null {
   const { ThemeFloatingPanel, DesktopInput, DesktopSelect, DesktopButton, DesktopIconButton, DesktopCardButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'launcher'
   const [entries, setEntries] = useState<LauncherEntry[]>([])
   const [summary, setSummary] = useState<LauncherSummary>({ total: 0, applications: 0, shortcuts: 0, groupCounts: {} })
@@ -61,9 +62,9 @@ export function LauncherPanel(): ReactElement | null {
     setBusy(true); setError('')
     try {
       if (refresh) await call('launcher', 'refresh')
-      const [next, nextGroups, nextSummary] = await Promise.all([call<LauncherEntry[]>('launcher', 'list', query, 0), call<LauncherGroup[]>('launcher', 'groups'), call<LauncherSummary>('launcher', 'summary', query)])
+      const [next, nextGroups, nextSummary] = await Promise.all([callValidated(LauncherEntriesSchema, 'launcher', 'list', query, 0), callValidated(LauncherGroupsSchema, 'launcher', 'groups'), callValidated(LauncherSummarySchema, 'launcher', 'summary', query)])
       setEntries(next); setGroups(nextGroups); setSummary(nextSummary)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '无法读取启动项') }
+    } catch (cause) { setError(errorText(cause, '无法读取启动项')) }
     finally { setBusy(false) }
   }
 
@@ -84,21 +85,21 @@ export function LauncherPanel(): ReactElement | null {
   const loadMore = async (): Promise<void> => {
     setBusy(true)
     try {
-      const next = await call<LauncherEntry[]>('launcher', 'list', query, entries.length)
+      const next = await callValidated(LauncherEntriesSchema, 'launcher', 'list', query, entries.length)
       setEntries((current) => [...current, ...next])
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '加载更多失败') }
+    } catch (cause) { setError(errorText(cause, '加载更多失败')) }
     finally { setBusy(false) }
   }
   const launch = async (entry: LauncherEntry): Promise<void> => {
     setError('')
     try { await call('launcher', 'open', entry.id) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '启动失败') }
+    catch (cause) { setError(errorText(cause, '启动失败')) }
   }
   const createGroup = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
     if (!newGroup.trim()) return
-    try { setGroups(await call<LauncherGroup[]>('launcher', 'createGroup', newGroup)); setNewGroup('') }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '创建分类失败') }
+    try { setGroups(await callValidated(LauncherGroupsSchema, 'launcher', 'createGroup', newGroup)); setNewGroup('') }
+    catch (cause) { setError(errorText(cause, '创建分类失败')) }
   }
   const assignGroup = async (groupId: string): Promise<void> => {
     if (!selected) return
@@ -111,21 +112,21 @@ export function LauncherPanel(): ReactElement | null {
         if (groupId) groupCounts[groupId] = (groupCounts[groupId] ?? 0) + 1
         return { ...current, groupCounts }
       })
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '更新分类失败') }
+    } catch (cause) { setError(errorText(cause, '更新分类失败')) }
   }
   const renameGroup = async (group: LauncherGroup): Promise<void> => {
     const name = window.prompt('重命名分类', group.name)
     if (name === null || !name.trim()) return
-    try { setGroups(await call<LauncherGroup[]>('launcher', 'renameGroup', group.id, name)) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '重命名分类失败') }
+    try { setGroups(await callValidated(LauncherGroupsSchema, 'launcher', 'renameGroup', group.id, name)) }
+    catch (cause) { setError(errorText(cause, '重命名分类失败')) }
   }
   const deleteGroup = async (group: LauncherGroup): Promise<void> => {
     try {
-      setGroups(await call<LauncherGroup[]>('launcher', 'deleteGroup', group.id))
+      setGroups(await callValidated(LauncherGroupsSchema, 'launcher', 'deleteGroup', group.id))
       setEntries((current) => current.map((entry) => entry.groupId === group.id ? { ...entry, groupId: undefined } : entry))
       setSummary((current) => ({ ...current, groupCounts: Object.fromEntries(Object.entries(current.groupCounts).filter(([id]) => id !== group.id)) }))
       if (filter === `group:${group.id}`) setFilter('all')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '删除分类失败') }
+    } catch (cause) { setError(errorText(cause, '删除分类失败')) }
   }
 
   return (

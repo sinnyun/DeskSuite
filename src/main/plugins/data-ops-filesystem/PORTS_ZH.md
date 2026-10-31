@@ -37,6 +37,8 @@
 
 本插件仅读取用户文件；所有写入均由 `data-ops-file-operations` 计划并执行。
 
+三种预览都只打开一次路径，在同一文件句柄上检查属性并最多读取“配置上限 + 1 字节”。即使文件在读取期间增长，或路径被替换，内存读取量仍有明确上限。文本/媒体预览拒绝目录，所有预览拒绝非普通文件。
+
 ## 提供的 MCP 工具
 
 | 工具 | 参数 | 返回 |
@@ -44,6 +46,8 @@
 | `list_drives` | — | 文本（JSON） |
 | `list_directory` | `path?: string, cursor?: string, limit?: number`（缺省主目录/200 项/最大 500 项） | 文本（格式化分页；有后续项目时返回 `nextCursor`） |
 | `read_text_file` | `path: string` | 文本（文件内容，上限 2MB） |
+| `filesystem_preview_image` | `path: string` | MCP 图片块；最大 12MB |
+| `filesystem_inspect_media_preview` | `path: string` | JSON 文本 `{ path, mimeType, byteLength }`；最多读取 64MB，不传输媒体正文 |
 
 ## 广播事件
 

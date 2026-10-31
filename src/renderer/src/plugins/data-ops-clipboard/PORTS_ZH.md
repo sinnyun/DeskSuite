@@ -21,6 +21,9 @@
 `historyImage`、`importLegacy`、`setFavorite`、`removeHistory`、`clearHistory`、`useHistory`、`updateHistory`、
 `groups`、`createGroup`、`renameGroup`、`deleteGroup`、`assignGroup`。
 
+一次性旧历史导入由主进程限制为最多 500 条、单条 1,000,000 字符、总计 2 MiB。
+- 渲染层在写入 React 状态前会解码历史（最多 50 条）、分组（最多 50 个）、文本（最多 4,000,000 字符）和 PNG data URL。图片预览上限为 8 MiB；无效或超限的磁盘图片返回 `null`。
+
 ## 存储与行为
 
 - 历史由主进程 `store` 持有；旧 `desksuite.clipboard.history` localStorage 仅用于一次迁移，IPC 成功后删除。

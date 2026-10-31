@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from 'cordis'
 import { z } from 'zod'
+import { errorMessage } from '../../services/error-text'
 
 const viewModeSchema = z.enum(['list', 'grid', 'gallery', 'grouped'])
 const sortFieldSchema = z.enum(['name', 'size', 'modifiedAt', 'kind', 'rating'])
@@ -79,6 +80,10 @@ const sessionPatchInput = sessionPatchSchema.extend({
   scrollAnchor: scrollAnchorSchema.partial().optional(),
   paneWidths: paneWidthsSchema.partial().optional()
 })
+const workspaceIdInput = z.string().min(1).max(128)
+const paneIdInput = z.string().min(1).max(64)
+const workspaceNameInput = z.string().trim().min(1).max(80)
+const workspaceLayoutInput = z.union([z.literal(1), z.literal(2), z.literal(4)])
 
 function makeWorkspace(name: string, layout: 1 | 2 | 4): Workspace {
   return workspaceSchema.parse({
@@ -93,7 +98,8 @@ function makeWorkspace(name: string, layout: 1 | 2 | 4): Workspace {
 }
 
 function resizeWorkspace(workspace: Workspace, layout: 1 | 2 | 4): Workspace {
-  const panes = workspace.panes.slice(0, layout)
+  // Keep hidden pane sessions so shrinking the visible layout never discards them.
+  const panes = [...workspace.panes]
   while (panes.length < layout) {
     const index = panes.length
     panes.push({ id: `pane-${index + 1}`, state: { ...defaultSession } })
@@ -150,7 +156,7 @@ export default {
       if (timer) clearTimeout(timer)
       timer = setTimeout(() => {
         timer = null
-        void flush().catch((error) => console.error('[session] 持久化失败', error))
+        void flush().catch((error) => console.error('[session] 持久化失败', errorMessage(error, '工作区会话保存失败')))
       }, 500)
       ;(timer as { unref?: () => void }).unref?.()
     }
@@ -241,6 +247,11 @@ export default {
         return sessionSchema.parse(session)
       },
       flush
+    }, {
+      get: z.tuple([]),
+      set: z.tuple([sessionPatchInput, paneIdInput.optional()]),
+      reset: z.tuple([]),
+      flush: z.tuple([])
     })
 
     ctx.ipc.handle('workspaces', {
@@ -343,6 +354,17 @@ export default {
         return true
       },
       flush
+    }, {
+      list: z.tuple([]),
+      get: z.tuple([workspaceIdInput]),
+      active: z.tuple([]),
+      create: z.tuple([workspaceNameInput, workspaceLayoutInput.optional()]),
+      rename: z.tuple([workspaceIdInput, workspaceNameInput]),
+      setLayout: z.tuple([workspaceIdInput, workspaceLayoutInput]),
+      setPane: z.tuple([workspaceIdInput, paneIdInput, sessionSchema]),
+      activate: z.tuple([workspaceIdInput, paneIdInput.optional()]),
+      remove: z.tuple([workspaceIdInput]),
+      flush: z.tuple([])
     })
   }
 }

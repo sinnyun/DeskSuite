@@ -47,6 +47,9 @@ Provides (renderer service registry):
   and `clearTagFocus()`; exposes workspace layout, pane stores, active pane, and the workspace catalog.
   `showTagAggregate` switches the active pane to a virtual listing of every file carrying the tag
   (including descendant tags) regardless of directory; any directory navigation exits that mode.
+- Explorer pane state and workspace pane catalog use plugin-owned Zustand vanilla stores. The
+  `selection` and `panes` services preserve synchronous snapshot/subscription compatibility;
+  consumer writes go through pane actions and the `explorerGroupedView` service.
 
 Consumes:
 
@@ -62,11 +65,11 @@ Consumes:
 | `filesystem` | `listDir` | Directory listing (also for lazy tree expansion) |
 | `filesystem` | `listMore` | Append the next 200 entries without resetting selection or scroll |
 | `filesystem` | `statPaths` | Stat changed paths reported by `fs:changed` for incremental row updates |
-| `filesystem` | `readText` | Text preview in inspector |
-| `filesystem` | `readImage` | Full image preview in the inspector |
+| `filesystem` | `readText` | Text preview in inspector; response path/content/truncated is decoded, content max 200,000 chars (main process source cap 2 MiB) |
+| `filesystem` | `readImage` | Full image preview in the inspector; response path and image MIME/base64 data URL are decoded (main process source cap 12 MiB) |
 | `thumbnails` | `getMany(paths, 320)` | Viewport-deferred, batched 240px JPEG card thumbnails (up to 64 paths/request), backed by the bounded main-process cache and renderer LRU (80 entries / 3.5 MB) |
 | `fileIcons` | `get(path)` | OS file icon (PNG data URL) shown in cards and the gallery stage when no thumbnail is available; the renderer caches by extension (per file for `.exe`/`.lnk`-style entries) |
-| `filesystem` | `readMedia` | Audio/video preview (64MB cap, returns a data URL) |
+| `filesystem` | `readMedia` | Audio/video preview; response path/MIME/data URL are decoded (64 MiB source cap) |
 | `fileOps` | `saveText` / `approve` / `execute` | Export manifest JSON through a planned, approved write operation |
 | `fileOps` | `startDrag` | Start the native OS drag for list/grid/gallery file items and the current selection |
 | `filesystem` | `open` / `reveal` / `pickDirectory` | Open with OS, reveal in folder, choose folder |
@@ -75,7 +78,11 @@ Consumes:
 | `workspaces` | `list` / `create` / `setLayout` / `setPane` / `activate` | Restore, create, switch, resize, and persist workspaces and pane state |
 | `watch` | `setPaneDirectories` / `clearPane` | Watch each pane's current and expanded directories; in tag-aggregate mode, the distinct parent directories of aggregated entries (up to 16 globally) |
 
-Consumes the `fs:changed` bridge event. Changes inside a pane's current directory are applied incrementally: only changed paths are re-statted, existing rows are updated, new entries appended, and deleted entries removed, keeping selection and scroll. The tag-aggregate view behaves the same for paths already in the aggregate; untagged files elsewhere in those directories are ignored. A full reload happens only when `invalidate` is set (more than 200 changes in one batch).
+Workspace bootstrap and switching decode `session.get`, `workspaces.list`, `workspaces.create`, `workspaces.activate`, and `workspaces.setLayout` results with plugin-local Zod schemas before restoring or replacing pane stores. The decoder bounds catalog, pane, path-list, and string sizes and validates persisted filter/layout enums. `FileWorkspace` watcher events retain their separate decoder.
+
+The network-drive visibility preference returned by `filesystem.getDrivePreferences` and broadcast through `filesystem:drivePreferences` is decoded with one strict plugin-local schema before updating FileTree state. Invalid events are ignored and keep the last valid preference.
+
+Consumes `fs:changed` through a plugin-local Zod decoder before touching pane state. It accepts the watcher shape `{ paths, dirs, invalidate }` plus optional producer metadata `{ at?, planId?, jobId? }` used by version/file-operation producers; malformed payloads are ignored. Changes inside a pane's current directory are applied incrementally: only changed paths are re-statted, existing rows are updated, new entries appended, and deleted entries removed, keeping selection and scroll. The tag-aggregate view behaves the same for paths already in the aggregate; untagged files elsewhere in those directories are ignored. A full reload happens when `invalidate` is set.
 
 ## Renderer storage
 
@@ -94,7 +101,7 @@ Channel prefix `Explorer` (lifecycle, navigation, errors, basket additions).
 
 The previous current-directory subtree is replaced by `QuickBookmarks`: create/rename/delete groups, fold groups, add selected folders from the active central pane with each group's + button, edit bookmark names/absolute paths, remove references, and click to navigate. Quick access and drives remain. Group deletion requires inline confirmation; reference deletion never deletes files. Empty selection disables +; mixed selection adds folders only. Errors appear inline and long paths truncate with full-path tooltips.
 
-Consumes IPC `quickBookmarks.act` / `complete` and events `quickBookmarks:changed` / `quickBookmarks:explorer`. The plugin setup installs the MCP renderer request listener and removes it on teardown. Persistent data belongs to the main `data-ops-quick-bookmarks` plugin (Store), with no new localStorage keys. The renderer MCP bridge reuses the same add-selected/open functions as UI controls.
+Consumes IPC `quickBookmarks.act` / `complete` and events `quickBookmarks:changed` / `quickBookmarks:explorer`. Every `act` result is decoded with the renderer plugin's local Zod group schema before React state updates. The plugin setup installs the MCP renderer request listener and removes it on teardown. Persistent data belongs to the main `data-ops-quick-bookmarks` plugin (Store), with no new localStorage keys. The renderer MCP bridge reuses the same add-selected/open functions as UI controls.
 
 ## Network drive toggle
 

@@ -88,6 +88,8 @@ src/renderer/src/plugins/
 
 ## 宿主与插件边界
 
+非画布共享状态由所有者使用 `zustand/vanilla` 创建，React 消费方用字段 selector 或浅比较订阅。插件服务仍只暴露业务动作与兼容数据快照，不暴露可任意写入的 `setState`。已迁移标注缓存（含按路径订阅）、暂存篮、分组选项、调试面板筛选、Explorer 每窗格状态与工作区窗格目录，以及宿主日志、主题、布局和插件目录。Workbench 的 `useLayout` 提供字段 selector，现有面板消费方已切换至浅比较 selector；公开的 selection 与 pluginCatalog `getSnapshot/subscribe` 仅作为 Zustand 适配层保留。Explorer 异步结果令牌、分页取消和窗格 dispose/保存刷新已补齐。Zustand 不改变主进程对持久化数据的所有权。
+
 - 宿主 `workbench/` **不 import 任何插件文件**；`registry.ts` 只允许用
   `import.meta.glob('../plugins/*/index.tsx')` 自动发现。
 - 插件**只能从 `workbench/sdk` 入口**引用宿主能力；不得直接引用 `workbench/` 内部文件。

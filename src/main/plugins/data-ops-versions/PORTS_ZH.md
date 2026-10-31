@@ -14,7 +14,7 @@
 服务名：`versions`。
 
 - `list(path)` 仅读取持久化数据库中的版本条目，不查询 Lore、不做隐式同步；源文件丢失时仍可查询历史。
-- `preview(path, versionId)` 仅为该路径拥有的版本返回有大小上限的 JPEG data URL。渲染层不会直接读取 `userData` 路径。
+- `preview(path, versionId)` 仅为该路径拥有的版本返回有大小上限的 JPEG data URL。保留禁止符号链接/普通文件检查，并校验打开句柄的设备号和 inode 与 `lstat` 一致；随后在同一句柄上 `fstat`，最多读取 512 KiB + 1 字节以拒绝增长竞态。渲染层不会直接读取 `userData` 路径。
 - `state(path)` 仅读取已持久化文件状态、标题、源文件大小/时间、内容匹配结果与中断恢复诊断。后台本地文件监听根据已存储的 SHA-256 指纹更新状态；界面查询本身既不读取源文件字节，也不启动 Lore。
 - `create(path, title)` 启动后台作业，提交不可变快照。排队前捕获源文件摘要，sidecar 暂存前会校验；提交后将图片预览复制为插件拥有的不可变文件。
 - `restore(path, versionId, confirm)` 要求 `confirm === true`、版本实体已存在且目标是普通文件。MCP 调用必须先位于配置的 MCP 可写根目录内；界面确认后仅以目标所在目录作为本次操作范围，不读取或修改 `mcp.writeRoots`；继续检查禁止目录和替换前源文件 SHA-256，支持续做匹配的中断恢复。成功后刷新文件索引并广播 `fs:changed`。

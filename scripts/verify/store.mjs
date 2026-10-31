@@ -61,12 +61,18 @@ async function main() {
     () => store.register('Bad Key', { schema: z.number(), default: 0 }),
     (error) => error instanceof StoreError && error.code === 'invalid-key'
   )
+  assert.throws(
+    () => store.registerDocument('bad-budget', 'bad-budget.json', { schema: z.string(), default: '', maxBytes: 0 }),
+    (error) => error instanceof StoreError && error.code === 'invalid-budget'
+  )
 
   store.register('counter', { schema: z.number().int(), default: 0 })
   store.register('doc', { schema: z.object({ v: z.number() }), default: { v: 0 } })
   store.register('fresh', { schema: z.object({ name: z.string() }), default: { name: 'x' } })
   store.register('future', { schema: z.object({ v: z.number() }), default: { v: 0 } })
   store.register('serial', { schema: z.number().int(), default: 0 })
+  store.registerDocument('limited-doc', 'limits/limited.json', { schema: z.string(), default: 'fallback', maxBytes: 128 })
+  store.registerDocument('limited-backup', 'limits/backup.json', { schema: z.string(), default: 'fallback', maxBytes: 128 })
   store.registerDocument('nested-doc', 'jobs/job-001.json', {
     schema: z.object({ jobId: z.string() }),
     default: { jobId: '' }
@@ -75,7 +81,7 @@ async function main() {
   step('listKeys / has 反映注册表')
   assert.ok(store.has('counter'))
   assert.equal(store.has('missing'), false)
-  assert.deepEqual(store.listKeys().sort(), ['counter', 'doc', 'fresh', 'future', 'nested-doc', 'serial'])
+  assert.deepEqual(store.listKeys().sort(), ['counter', 'doc', 'fresh', 'future', 'limited-backup', 'limited-doc', 'nested-doc', 'serial'])
 
   step('注册文档路径拒绝绝对路径与目录逃逸')
   assert.throws(
@@ -115,6 +121,23 @@ async function main() {
   assert.deepEqual(JSON.parse(backupRaw).data, { v: 7 })
   writeFileSync(join(root, 'doc.json'), '{ 这不是合法 JSON')
   assert.deepEqual(await store.read('doc'), { v: 7 })
+
+  step('超预算主文件不读取，回退有效备份；恢复后写入不覆盖有效备份')
+  const limitedPath = join(root, 'limits', 'limited.json')
+  mkdirSync(join(root, 'limits'), { recursive: true })
+  writeFileSync(`${limitedPath}.bak`, JSON.stringify({ version: 1, data: 'backup-value' }))
+  writeFileSync(limitedPath, JSON.stringify({ version: 1, data: 'oversized-value', padding: 'x'.repeat(256) }))
+  assert.equal(await store.read('limited-doc'), 'backup-value')
+  await store.write('limited-doc', 'fresh-value')
+  assert.equal(await store.read('limited-doc'), 'fresh-value')
+  assert.equal(JSON.parse(readFileSync(`${limitedPath}.bak`, 'utf8')).data, 'backup-value')
+
+  step('超预算备份返回默认值；超预算序列化写入在落盘前拒绝')
+  writeFileSync(join(root, 'limits', 'backup.json.bak'), JSON.stringify({ version: 1, data: 'x'.repeat(256) }))
+  assert.equal(await store.read('limited-backup'), 'fallback')
+  await expectStoreError(store.write('limited-doc', 'x'.repeat(256)), 'invalid-value')
+  assert.equal(await store.read('limited-doc'), 'fresh-value')
+  assert.equal(existsSync(`${limitedPath}.tmp`), false)
 
   step('遗留的 .tmp 文件被忽略')
   await store.write('counter', 42)

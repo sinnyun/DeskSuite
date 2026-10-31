@@ -10,11 +10,12 @@
 - IPC 服务：`fileIcons`
   - `get(path)` 返回 `{ dataUrl }`，内容是操作系统文件图标（无损 PNG，保留透明通道），用于卡片在没有缩略图时的回退显示；目录路径同样可用。
   - 主进程按扩展名做内存缓存（普通文件图标在同一扩展名内复用，`.exe` / `.lnk` / `.ico` / `.msi` / `.url` 等逐个文件缓存），上限 512 项；并发请求按同一缓存键合并。
+- MCP 工具：只读 `thumbnail_get({ path, edge? })` 复用 IPC `get` 的本地绝对文件路径与 64–1024 edge 校验，返回 JPEG 图片 block。不会修改源文件；生成结果可能更新插件内部缓存。与 `read_text_file` 一致，调用方指定本地路径，因此 `read` 权限下可返回调用方所给可读路径的像素内容。
 - 缓存：JPEG 质量 80，目录为 `<userData>/thumbs`。SHA-1 键由规范化路径身份、文件大小、mtime 与 edge 组成，存于固定槽位文件头部。固定 20,000 个槽位使 LRU 可通过截断和复用文件完成，不需要该插件删除任意文件。
-- 缓存限制：按 LRU 使用 `thumbnails.cacheMiB` 设置（32–2048 MiB，默认 512）与 20,000 个非空缓存项；命中时刷新访问时间；重启后从缓存文件头重建索引。
+- 缓存限制：按 LRU 使用 `thumbnails.cacheMiB` 设置（32–2048 MiB，默认 512）与 20,000 个非空缓存项；命中时刷新访问时间；重启后从缓存文件头重建索引。单个缓存文件最多 2 MiB、JSON 文件头最多 4 KiB；文件头使用严格 Zod schema 校验，超限或损坏项会丢弃。读取时复用同一个文件句柄执行 `fstat`，最多读取 2 MiB + 1 字节，避免并发增长导致无界分配。
 - 生成顺序：先调用 `nativeImage.createThumbnailFromPath`；失败时调用 `nativeImage.createFromPath` 并缩放；再失败时使用 `app.getFileIcon`。
 - 系统图标：`fileIcons.get` 使用 `app.getFileIcon(path, { size: 'large' })`；缓存仅存在于内存，不写入缩略图磁盘缓存。
-- 事件 / MCP：无。
+- 事件：无。
 - 消费配置：`thumbnails.cacheMiB`；设置变更后立即调整预算并剪枝。
 - 已知边界：系统预览较小或不可用时可能放大原图/系统图标；对外始终按宽高比等比缩放，最长边不超过 240px。缓存格式版本为 `DSSTHM02`，格式变更时旧缓存整体失效。
 

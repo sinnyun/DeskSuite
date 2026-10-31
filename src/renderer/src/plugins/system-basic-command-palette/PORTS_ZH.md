@@ -7,5 +7,6 @@
 - 通过 `commands.list` 读取命令，通过 `commands.run` 执行；mutating 计划走 `commands.approve` / `commands.execute`。
 - Ctrl+K 打开面板；已注册命令的快捷键派发同一个命令 ID。
 - 订阅 MCP 请求的 `commands:approval` 与内置界面/主题动作的 `commands:action`。
+- 使用插件本地 Zod schema 解码命令描述符、MCP 审批事件、动作事件、界面审批计划和 MCP 工具结果，再写入状态或执行动作。格式无效或不支持的动作会忽略并显示友好提示。
 - 展示权限徽标，并在执行 mutating 命令前显示人工批准弹窗。
 - 界面文案使用中文。

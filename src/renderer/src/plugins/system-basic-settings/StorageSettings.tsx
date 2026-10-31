@@ -1,33 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { FolderOpen, RefreshCw } from 'lucide-react'
-import { call, useUiKit } from '../../workbench/sdk'
+import { call, callValidated, errorText, useUiKit } from '../../workbench/sdk'
+import { storageSnapshotSchema } from './storage-schema'
+import type { z } from 'zod'
 
-interface StorageEntryInfo {
-  label: string
-  description?: string
-  path: string
-  kind: 'file' | 'directory'
-  exists: boolean
-  size: number
-  files: number
-}
-
-interface StorageGroupInfo {
-  plugin: string
-  title: string
-  entries: StorageEntryInfo[]
-  size: number
-  files: number
-}
-
-interface StorageSnapshot {
-  userData: string
-  groups: StorageGroupInfo[]
-  size: number
-  files: number
-  measuredAt: number
-}
+type StorageSnapshot = z.infer<typeof storageSnapshotSchema>
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -52,9 +30,9 @@ export function StorageSettings(): ReactElement {
     setLoading(true)
     setError('')
     try {
-      setSnapshot(await call<StorageSnapshot>('storage', 'list'))
+      setSnapshot(await callValidated(storageSnapshotSchema, 'storage', 'list'))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorText(cause, '无法读取插件存储信息'))
     } finally {
       setLoading(false)
     }
@@ -64,7 +42,7 @@ export function StorageSettings(): ReactElement {
     try {
       await call('storage', 'open', path)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorText(cause, '无法打开插件存储位置'))
     }
   }
 

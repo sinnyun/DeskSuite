@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { ReactElement } from 'react'
 import { ChartNoAxesColumn, FolderSearch } from 'lucide-react'
-import { useLayout, useUiKit, type SelectionItem } from '../../../workbench/sdk'
+import { useLayoutShallow, useUiKit, type SelectionItem } from '../../../workbench/sdk'
 import { useSelectionSnapshot } from '../useSelectionSnapshot'
 import { KIND_COLOR, KIND_LABEL, formatBytes } from '../format'
 
@@ -23,7 +23,7 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
 
 export function AnalyticsPanel(): ReactElement | null {
   const { ThemeFloatingPanel } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const snapshot = useSelectionSnapshot()
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'analytics'
 

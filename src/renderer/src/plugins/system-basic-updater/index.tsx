@@ -1,17 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent, ReactElement } from 'react'
 import { Download, RefreshCw, Settings2, Upload } from 'lucide-react'
-import { call, definePlugin, useLayout, useUiKit } from '../../workbench/sdk'
-
-interface UpdateState {
-  status: 'idle' | 'checking' | 'available' | 'unavailable' | 'downloading' | 'downloaded' | 'error'
-  currentVersion: string
-  availableVersion?: string
-  percent?: number
-  message?: string
-  feedUrl: string
-  packaged: boolean
-}
+import { callValidated, definePlugin, errorText, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import { updateOperationResultSchema, updateStateSchema, type UpdateState } from './schemas'
 
 export default definePlugin({
   id: 'system-basic-updater',
@@ -27,13 +18,12 @@ export default definePlugin({
 
 function UpdateButton(): ReactElement {
   const { DesktopIconButton } = useUiKit()
-  const { openFloatingPanel } = useLayout()
+  const { openFloatingPanel } = useLayoutShallow((state) => ({ openFloatingPanel: state.openFloatingPanel }))
   return <DesktopIconButton size="sm" icon={<Download className="h-3.5 w-3.5" />} tooltip="软件更新" onClick={() => openFloatingPanel('updater')} />
 }
-
 function UpdatePanel(): ReactElement {
   const { ThemeFloatingPanel, DesktopButton, DesktopInput } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'updater'
   const [state, setState] = useState<UpdateState | null>(null)
   const [feedUrl, setFeedUrl] = useState('')
@@ -43,11 +33,14 @@ function UpdatePanel(): ReactElement {
   useEffect(() => {
     if (!isOpen) return
     let alive = true
-    void call<UpdateState>('updater', 'get').then((value) => {
+    void callValidated(updateStateSchema, 'updater', 'get').then((value) => {
       if (alive) { setState(value); setFeedUrl(value.feedUrl) }
-    }).catch((cause) => { if (alive) setError(errorText(cause)) })
+    }).catch((cause) => { if (alive) setError(errorText(cause, '无法读取更新状态')) })
     const unsubscribe = window.bridge.onEvent((channel, payload) => {
-      if (channel === 'updater:state') setState(payload as UpdateState)
+      if (channel !== 'updater:state') return
+      const parsed = updateStateSchema.safeParse(payload)
+      if (parsed.success) setState(parsed.data)
+      else if (alive) setError('更新状态数据格式无效，已忽略异常消息')
     })
     return () => { alive = false; unsubscribe() }
   }, [isOpen])
@@ -55,16 +48,16 @@ function UpdatePanel(): ReactElement {
   async function perform(method: 'check' | 'download' | 'install'): Promise<void> {
     setBusy(true); setError('')
     try {
-      const result = await call<UpdateState | true>('updater', method)
+      const result = await callValidated(updateOperationResultSchema, 'updater', method)
       if (result !== true) setState(result)
-    } catch (cause) { setError(errorText(cause)) }
+    } catch (cause) { setError(errorText(cause, '更新操作失败')) }
     finally { setBusy(false) }
   }
 
   async function saveFeed(event: FormEvent): Promise<void> {
     event.preventDefault(); setBusy(true); setError('')
-    try { setState(await call<UpdateState>('updater', 'setFeedUrl', feedUrl.trim())) }
-    catch (cause) { setError(errorText(cause)) }
+    try { setState(await callValidated(updateStateSchema, 'updater', 'setFeedUrl', feedUrl.trim())) }
+    catch (cause) { setError(errorText(cause, '更新源保存失败')) }
     finally { setBusy(false) }
   }
 
@@ -94,5 +87,3 @@ function UpdatePanel(): ReactElement {
     </div>
   </ThemeFloatingPanel>
 }
-
-function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error) }

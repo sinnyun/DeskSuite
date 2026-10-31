@@ -18,11 +18,13 @@ Service name: `annotations`.
 - `tree()` returns nested tags ordered by sibling `sort` and id. Nodes include materialized `path`.
 - `create({ name, parentId?, color? })`, `rename({ tagId, name })`, `merge({ sourceId, targetId })`, and `remove(tagId)` manage the tree.
 - `importLegacy(map)` idempotently imports the former renderer metadata map; it returns `{ imported, skipped }`.
+- Database-derived tag trees, path annotation maps, tag counts and path lists are parsed against plugin-local Zod schemas before leaving IPC/MCP handlers. Mutation acknowledgements and import counters are also checked. `annotations:changed` broadcasts are validated before emission.
 
 ## MCP tools
 
 - `tag_list` and `tag_files` (paths for a tag subtree) are read only.
 - `tag_create`, `tag_assign`, `meta_rate`, and `meta_favorite` are mutating low impact tools and use the MCP service access gate.
+- MCP failures use the shared bounded error formatter, which avoids arbitrary object coercion and scrubs credentials and local absolute paths.
 
 ## Events and limits
 

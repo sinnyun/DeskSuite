@@ -18,11 +18,13 @@
 - `tree()` 返回按同级 `sort` 与 id 排序的树；节点包含物化 `path`。
 - `create({ name, parentId?, color? })`、`rename({ tagId, name })`、`merge({ sourceId, targetId })`、`remove(tagId)` 管理标签树。
 - `importLegacy(map)` 幂等导入旧渲染层元数据映射，返回 `{ imported, skipped }`。
+- 数据库读取的标签树、路径元数据映射、标签计数和路径列表在离开 IPC/MCP handler 前经插件本地 Zod schema 校验；写操作确认值与导入计数也会校验。`annotations:changed` 广播在发出前校验。
 
 ## MCP 工具
 
 - `tag_list`、`tag_files`（列出标签子树下的全部文件路径）为只读工具。
 - `tag_create`、`tag_assign`、`meta_rate`、`meta_favorite` 为低影响 mutating 工具，由 MCP 服务统一执行权限闸门。
+- MCP 失败文本统一使用共享限长错误格式化器，避免任意对象强制转换，并遮蔽凭据与本机绝对路径。
 
 ## 事件与限制
 

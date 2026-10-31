@@ -5,10 +5,13 @@ import { join } from 'node:path'
 import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
 import { mcpError, mcpText } from '../../services/mcp'
+import { MAX_CLIPBOARD_IMAGE_BYTES, readBoundedClipboardImageFile } from './image-file'
 
 const MAX_TEXT_LENGTH = 1_000_000
+const MAX_LEGACY_IMPORT_ITEMS = 500
+const MAX_LEGACY_IMPORT_CHARS = 2 * 1024 * 1024
 const MAX_HISTORY = 50
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+const MAX_IMAGE_BYTES = MAX_CLIPBOARD_IMAGE_BYTES
 const IMAGE_SLOTS = 50
 const EXPIRY_MS = 7 * 24 * 60 * 60 * 1000
 const POLL_MS = 1500
@@ -25,6 +28,7 @@ const HistoryItemSchema = z.object({
   groupId: z.string().optional()
 })
 const HistorySchema = z.array(HistoryItemSchema).max(MAX_HISTORY)
+const LegacyImportSchema = z.array(z.string().max(MAX_TEXT_LENGTH)).max(MAX_LEGACY_IMPORT_ITEMS)
 const ClipboardGroupSchema = z.object({ id: z.string(), name: z.string().min(1).max(32), createdAt: z.number() })
 const ClipboardGroupsSchema = z.array(ClipboardGroupSchema).max(50)
 type HistoryItem = z.infer<typeof HistoryItemSchema>
@@ -49,7 +53,7 @@ function imagePng(): Buffer | null {
 const clipboardPlugin: Plugin = {
   inject: ['ipc', 'mcp', 'store', 'storage'],
   apply(ctx: Context) {
-    ctx.store.register('clipboard-history', { schema: HistorySchema, default: [], version: 1 })
+    ctx.store.register('clipboard-history', { schema: HistorySchema, default: [], version: 1, maxBytes: 64 * 1024 * 1024 })
     ctx.store.register('clipboard-groups', { schema: ClipboardGroupsSchema, default: [], version: 1 })
     ctx.storage.register('system-basic-clipboard', {
       title: '剪贴板历史',
@@ -124,6 +128,24 @@ const clipboardPlugin: Plugin = {
       return ctx.store.update<HistoryItem[]>('clipboard-history', (items) => removeExpired(items, now))
     }
 
+    const historyImage = async (id: string): Promise<string | null> => {
+      const item = (await listHistory()).find((entry) => entry.id === id)
+      if (!item || item.kind !== 'image' || item.imageSlot === undefined) return null
+      try {
+        const path = join(imageDir, `${item.imageSlot}.png`)
+        const buffer = await readBoundedClipboardImageFile(path)
+        if (nativeImage.createFromBuffer(buffer).isEmpty()) return null
+        return `data:image/png;base64,${buffer.toString('base64')}`
+      } catch {
+        return null
+      }
+    }
+
+    const removeHistory = async (id: string): Promise<boolean> => {
+      await ctx.store.update<HistoryItem[]>('clipboard-history', (items) => items.filter((item) => item.id !== id))
+      return true
+    }
+
     ctx.ipc.handle('clipboard', {
       readText: () => clipboard.readText(),
       writeText: (text: string) => {
@@ -149,11 +171,14 @@ const clipboardPlugin: Plugin = {
       },
       capture: () => captureCurrent(),
       importLegacy: async (texts: string[]) => {
-        if (!Array.isArray(texts)) throw new Error('历史格式无效')
+        const importedTexts = LegacyImportSchema.parse(texts)
+        if (importedTexts.reduce((total, text) => total + Buffer.byteLength(text, 'utf8'), 0) > MAX_LEGACY_IMPORT_CHARS) {
+          throw new Error('旧剪贴板历史总字符数超过 2 MiB 上限')
+        }
         const now = Date.now()
         await ctx.store.update<HistoryItem[]>('clipboard-history', (stored) => {
-          const imported = texts
-            .filter((text): text is string => typeof text === 'string' && text.length > 0 && text.length <= MAX_TEXT_LENGTH)
+          const imported = importedTexts
+            .filter((text) => text.length > 0)
             .slice(0, 20)
             .map((content) => ({
               id: hash(content), kind: 'text' as const, content, category: categorize(content),
@@ -218,15 +243,7 @@ const clipboardPlugin: Plugin = {
         })
         return result.find((item) => item.id === nextId) ?? null
       },
-      historyImage: async (id: string) => {
-        const item = (await listHistory()).find((entry) => entry.id === id)
-        if (!item || item.kind !== 'image' || item.imageSlot === undefined) return null
-        try {
-          return `data:image/png;base64,${(await fs.readFile(join(imageDir, `${item.imageSlot}.png`))).toString('base64')}`
-        } catch {
-          return null
-        }
-      },
+      historyImage,
       setFavorite: async (id: string, favorite: boolean) => {
         await ctx.store.update<HistoryItem[]>('clipboard-history', (items) =>
           items.map((item) => (item.id === id ? { ...item, favorite: Boolean(favorite) } : item))
@@ -234,8 +251,7 @@ const clipboardPlugin: Plugin = {
         return true
       },
       removeHistory: async (id: string) => {
-        await ctx.store.update<HistoryItem[]>('clipboard-history', (items) => items.filter((item) => item.id !== id))
-        return true
+        return removeHistory(id)
       },
       clearHistory: async () => {
         await ctx.store.update<HistoryItem[]>('clipboard-history', (items) => items.filter((item) => item.favorite))
@@ -246,11 +262,34 @@ const clipboardPlugin: Plugin = {
         if (!item) throw new Error('剪贴板历史已过期')
         if (item.kind === 'text') clipboard.writeText(item.content ?? '')
         else if (item.imageSlot !== undefined) {
-          const buffer = await fs.readFile(join(imageDir, `${item.imageSlot}.png`))
-          clipboard.writeImage(nativeImage.createFromBuffer(buffer))
+          const path = join(imageDir, `${item.imageSlot}.png`)
+          const buffer = await readBoundedClipboardImageFile(path)
+          const image = nativeImage.createFromBuffer(buffer)
+          if (image.isEmpty()) throw new Error('剪贴板图片文件格式无效')
+          clipboard.writeImage(image)
         }
         return true
       }
+    }, {
+      readText: z.tuple([]),
+      writeText: z.tuple([z.string().max(MAX_TEXT_LENGTH)]),
+      readImage: z.tuple([]),
+      hasImage: z.tuple([]),
+      writeImage: z.tuple([z.string().max(12 * 1024 * 1024).regex(/^data:image\/png;base64,[A-Za-z0-9+/=]+$/)]),
+      capture: z.tuple([]),
+      importLegacy: z.tuple([LegacyImportSchema]),
+      history: z.tuple([]),
+      groups: z.tuple([]),
+      createGroup: z.tuple([z.string().trim().min(1).max(32)]),
+      renameGroup: z.tuple([z.string().min(1).max(128), z.string().trim().min(1).max(32)]),
+      deleteGroup: z.tuple([z.string().min(1).max(128)]),
+      assignGroup: z.tuple([z.string().min(1).max(128), z.string().min(1).max(128).nullable()]),
+      updateHistory: z.tuple([z.string().min(1).max(128), z.string().max(MAX_TEXT_LENGTH)]),
+      historyImage: z.tuple([z.string().min(1).max(128)]),
+      setFavorite: z.tuple([z.string().min(1).max(128), z.boolean()]),
+      removeHistory: z.tuple([z.string().min(1).max(128)]),
+      clearHistory: z.tuple([]),
+      useHistory: z.tuple([z.string().min(1).max(128)])
     })
 
     ctx.mcp.registerTool('read_clipboard', {
@@ -264,6 +303,23 @@ const clipboardPlugin: Plugin = {
         }
         const text = clipboard.readText()
         return mcpText(text.length > 0 ? text : '（剪贴板为空或不是文本）')
+      }
+    })
+
+    ctx.mcp.registerTool('clipboard_history_list', {
+      description: '读取未过期的剪贴板历史条目（不包含图片正文）。',
+      execute: async () => mcpText(JSON.stringify(await listHistory()))
+    })
+
+    ctx.mcp.registerTool('clipboard_history_image', {
+      description: '以 MCP image block 读取指定剪贴板历史图片；缺失、损坏或超过 8 MiB 时返回错误。',
+      inputSchema: { id: z.string().min(1).max(128) },
+      execute: async (args) => {
+        const dataUrl = await historyImage(args.id as string)
+        if (!dataUrl) return mcpError('剪贴板历史图片不存在、损坏或超过 8MB 上限')
+        const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+        if (!match) return mcpError('剪贴板历史图片预览格式无效')
+        return { content: [{ type: 'image', data: match[1], mimeType: 'image/png' }] }
       }
     })
 

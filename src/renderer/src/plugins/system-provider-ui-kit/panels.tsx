@@ -15,7 +15,7 @@ import type {
   ThemeSidebarPanelProps,
   ThemeWorkspacePanelProps
 } from '../../workbench/sdk'
-import { useLayout } from '../../workbench/sdk'
+import { useLayoutShallow } from '../../workbench/sdk'
 import { DesktopIconButton, DesktopTab } from './components'
 
 function fit(value: number, min: number, max: number): number {
@@ -183,7 +183,7 @@ export function ThemeFloatingPanel({
   children
 }: ThemeFloatingPanelProps): ReactElement | null {
   const geometryKey = `desksuite.ui.floating.${persistenceKey ?? title}`
-  const { floatingPanels, setFloatingPanelGeometry } = useLayout()
+  const { floatingPanels, setFloatingPanelGeometry } = useLayoutShallow((state) => ({ floatingPanels: state.floatingPanels, setFloatingPanelGeometry: state.setFloatingPanelGeometry }))
   const savedGeometry = floatingPanels[geometryKey] ?? {}
   const [size, setSize] = useState(() => ({
     width: fit(savedGeometry.width ?? initialWidth, minWidth, window.innerWidth - 20),

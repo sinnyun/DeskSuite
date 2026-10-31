@@ -34,6 +34,7 @@ Consumes: `ui` not required (buttons are local to this plugin).
 ## Events consumed
 
 - `window:state` — window state broadcast from the main plugin; drives the maximize/restore icon.
+- The initial `state` result and `window:state` event share a plugin-local strict Zod schema. Invalid events are ignored, preserving the most recent valid state.
 
 ## Behaviour notes
 

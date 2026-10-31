@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Command as Cmdk } from 'cmdk'
 import { Command as CommandIcon, Search } from 'lucide-react'
-import { call, definePlugin, logStore, useLayout, useTheme, useUiKit } from '../../workbench/sdk'
+import { call, callValidated, definePlugin, errorText, getService, logStore, useLayoutShallow, useTheme, useUiKit } from '../../workbench/sdk'
+import type { PluginCatalogService } from '../../workbench/sdk'
+import { ActionEventSchema, ApprovalEventSchema, CommandListSchema, McpResultSchema, UiPlanSchema, isSupportedCommandAction } from './schemas'
 
 interface CommandItem {
   id: string
@@ -14,7 +16,7 @@ interface CommandItem {
   impact?: 'low' | 'high'
   hasParameters?: boolean
   inputSchema?: { properties?: Record<string, ParameterSchema>; required?: string[] }
-  source?: 'command' | 'mcp-tool'
+  source?: 'command' | 'mcp-tool' | 'ipc'
 }
 
 interface ParameterSchema { title?: string; description?: string; type?: string; enum?: unknown[]; default?: unknown }
@@ -41,7 +43,7 @@ function CommandPalette(): ReactElement | null {
     floatingPanelOpen, activeFloatingPanel, openFloatingPanel, closeFloatingPanel, toggleFloatingPanel,
     openLeftTab, openRightTab, openBottomTab, toggleLeftCollapsed, toggleRightCollapsed, toggleBottomCollapsed,
     toggleZenMode, resetLayout
-  } = useLayout()
+  } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, openFloatingPanel: state.openFloatingPanel, closeFloatingPanel: state.closeFloatingPanel, toggleFloatingPanel: state.toggleFloatingPanel, openLeftTab: state.openLeftTab, openRightTab: state.openRightTab, openBottomTab: state.openBottomTab, toggleLeftCollapsed: state.toggleLeftCollapsed, toggleRightCollapsed: state.toggleRightCollapsed, toggleBottomCollapsed: state.toggleBottomCollapsed, toggleZenMode: state.toggleZenMode, resetLayout: state.resetLayout }))
   const { toggleTheme } = useTheme()
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'commands'
   const [commands, setCommands] = useState<CommandItem[]>([])
@@ -57,8 +59,8 @@ function CommandPalette(): ReactElement | null {
   commandsRef.current = commands
 
   async function reload(): Promise<void> {
-    try { setCommands(await call<CommandItem[]>('commands', 'list')) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    try { setCommands(await callValidated(CommandListSchema, 'commands', 'list')) }
+    catch (cause) { setError(errorText(cause, '无法读取命令列表')) }
   }
 
   useEffect(() => {
@@ -70,12 +72,14 @@ function CommandPalette(): ReactElement | null {
 
   useEffect(() => window.bridge.onEvent((channel, payload) => {
     if (channel === 'commands:approval') {
-      const request = payload as ApprovalRequest
-      setMcpApproval(request)
+      const parsed = ApprovalEventSchema.safeParse(payload)
+      if (!parsed.success) { setError('收到无效的命令审批请求'); return }
+      setMcpApproval(parsed.data)
       openFloatingPanel('commands')
     } else if (channel === 'commands:action') {
-      const event = payload as { action?: string }
-      applyAction(event.action)
+      const parsed = ActionEventSchema.safeParse(payload)
+      if (!parsed.success || !isSupportedCommandAction(parsed.data.action)) { setError('收到无效的界面命令'); return }
+      applyAction(parsed.data.action)
     }
   }), [
     openFloatingPanel, closeFloatingPanel, toggleFloatingPanel, openLeftTab, openRightTab, openBottomTab,
@@ -119,23 +123,26 @@ function CommandPalette(): ReactElement | null {
     setExecutionResult(null)
     try {
       const result = await call<unknown>('commands', 'run', command.id, args)
-      if (isUiPlan(result)) {
+      const parsedPlan = UiPlanSchema.safeParse(result)
+      if (parsedPlan.success) {
         setParameterCommand(null)
-        setUiApproval({ planId: result.planId, command, plan: result.plan })
+        setUiApproval({ planId: parsedPlan.data.planId, command, plan: parsedPlan.data.plan })
         openFloatingPanel('commands')
       } else {
         setParameterCommand(null)
-        if (command.source === 'mcp-tool' && isMcpToolResult(result)) {
-          setExecutionResult({ command, result })
+        if (command.source === 'mcp-tool') {
+          const parsed = McpResultSchema.safeParse(result)
+          if (!parsed.success) throw new Error('命令返回了无效的 MCP 结果')
+          setExecutionResult({ command, result: parsed.data })
           openFloatingPanel('commands')
           return
         }
         const action = typeof result === 'object' && result !== null && 'action' in result ? result.action : undefined
-        if (typeof action === 'string') applyAction(action)
+        if (typeof action === 'string' && isSupportedCommandAction(action)) applyAction(action)
         else closeFloatingPanel()
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorText(cause, '命令执行失败'))
     }
   }
 
@@ -146,9 +153,12 @@ function CommandPalette(): ReactElement | null {
       await call('commands', 'approve', uiApproval.planId, accepted)
       const result = accepted ? await call<unknown>('commands', 'execute', uiApproval.planId) : undefined
       setUiApproval(null)
-      if (accepted && approvedCommand.source === 'mcp-tool' && isMcpToolResult(result)) setExecutionResult({ command: approvedCommand, result })
-      else if (accepted) closeFloatingPanel()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+      if (accepted && approvedCommand.source === 'mcp-tool') {
+        const parsed = McpResultSchema.safeParse(result)
+        if (!parsed.success) throw new Error('命令返回了无效的 MCP 结果')
+        setExecutionResult({ command: approvedCommand, result: parsed.data })
+      } else if (accepted) closeFloatingPanel()
+    } catch (cause) { setError(errorText(cause, '命令确认失败')) }
   }
 
   async function decideMcpApproval(accepted: boolean): Promise<void> {
@@ -157,7 +167,7 @@ function CommandPalette(): ReactElement | null {
       await call('commands', 'approve', mcpApproval.planId, accepted)
       setMcpApproval(null)
       if (accepted) closeFloatingPanel()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    } catch (cause) { setError(errorText(cause, 'MCP 请求处理失败')) }
   }
 
   function dismiss(): void {
@@ -192,6 +202,12 @@ function CommandPalette(): ReactElement | null {
     else if (action === 'clipboard.open') openFloatingPanel('clipboard')
     else if (action === 'debug-console.open') openFloatingPanel('debug-console')
     else if (action === 'theme.toggle') toggleTheme()
+    else if (action?.startsWith('plugin.set-enabled:')) {
+      const [, encodedId, enabled] = action.split(':')
+      const id = decodeURIComponent(encodedId ?? '')
+      try { getService<PluginCatalogService>('pluginCatalog')?.setEnabled(id, enabled === 'true') }
+      catch (error) { logStore.push({ level: 'error', source: 'PluginLoader', message: 'MCP 插件启停失败', payload: errorText(error, 'MCP 插件启停失败') }) }
+    }
   }
 
   const approval = mcpApproval ?? uiApproval
@@ -252,21 +268,13 @@ function ParameterView({ command, values, onChange, onCancel, onRun }: { command
     <div><h3 className="text-sm font-semibold">{command.title}</h3><p className="mt-1 text-xs text-[var(--ds-text-muted)]">{command.description}</p></div>
     <label className="flex min-h-0 flex-1 flex-col gap-1 text-xs"><span className="font-medium">JSON 参数</span><DesktopTextarea aria-label="JSON 参数" value={jsonText} onChange={(event) => { setJsonText(event.target.value); setJsonError('') }} spellCheck={false} className="min-h-0 flex-1 resize-none font-mono" /></label>
     {jsonError && <p role="alert" className="shrink-0 text-xs text-[var(--ds-status-danger)]">{jsonError}</p>}
-    <div className="flex shrink-0 justify-end gap-2"><DesktopButton size="sm" onClick={onCancel}>返回</DesktopButton><DesktopButton size="sm" variant="primary" onClick={() => { try { const parsed: unknown = JSON.parse(jsonText); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('参数必须是 JSON 对象'); onRun(parsed as Record<string, unknown>) } catch (cause) { setJsonError(cause instanceof Error ? cause.message : String(cause)) } }}>继续</DesktopButton></div>
+    <div className="flex shrink-0 justify-end gap-2"><DesktopButton size="sm" onClick={onCancel}>返回</DesktopButton><DesktopButton size="sm" variant="primary" onClick={() => { try { const parsed: unknown = JSON.parse(jsonText); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('参数必须是 JSON 对象'); onRun(parsed as Record<string, unknown>) } catch (cause) { setJsonError(errorText(cause, '参数解析失败')) } }}>继续</DesktopButton></div>
   </section>
   return <section className="flex min-h-0 flex-1 flex-col gap-3">
     <div><h3 className="text-sm font-semibold">{command.title}</h3><p className="mt-1 text-xs text-[var(--ds-text-muted)]">{command.description}</p></div>
     <div className="min-h-0 flex-1 space-y-3 overflow-auto pr-1">{fields.map(([name, schema]) => <label key={name} className="block space-y-1 text-xs"><span className="font-medium">{schema.title ?? name}{required.has(name) ? ' *' : ''}</span>{schema.description && <span className="block text-xs text-[var(--ds-text-muted)]">{schema.description}</span>}{schema.enum ? <DesktopSelect value={String(values[name] ?? '')} onChange={(value) => onChange(name, value)} options={schema.enum.map((option) => ({ value: String(option), label: String(option) }))} className="w-full" /> : schema.type === 'boolean' ? <input type="checkbox" checked={values[name] === true} onChange={(event) => onChange(name, event.target.checked)} /> : schema.type === 'array' ? <DesktopTextarea value={Array.isArray(values[name]) ? (values[name] as unknown[]).join('\n') : ''} onChange={(event) => onChange(name, event.target.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))} className="h-20 w-full font-mono" /> : <DesktopInput type={schema.type === 'number' || schema.type === 'integer' ? 'number' : 'text'} value={String(values[name] ?? '')} onChange={(event) => onChange(name, schema.type === 'number' || schema.type === 'integer' ? Number(event.target.value) : event.target.value)} className="w-full" />}</label>)}</div>
     <div className="flex shrink-0 justify-end gap-2"><DesktopButton size="sm" onClick={onCancel}>返回</DesktopButton><DesktopButton size="sm" variant="primary" onClick={() => onRun()}>继续</DesktopButton></div>
   </section>
-}
-
-function isUiPlan(value: unknown): value is { requiresApproval: true; planId: string; plan: unknown } {
-  return typeof value === 'object' && value !== null && 'requiresApproval' in value && value.requiresApproval === true && 'planId' in value && typeof value.planId === 'string'
-}
-
-function isMcpToolResult(value: unknown): value is { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> } {
-  return typeof value === 'object' && value !== null && 'content' in value && Array.isArray(value.content)
 }
 
 function matchKeybinding(event: globalThis.KeyboardEvent, binding: string): boolean {

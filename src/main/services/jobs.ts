@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from 'cordis'
 import { Service } from 'cordis'
+import { errorMessage, sanitizeErrorText } from './error-text.ts'
+import { boundedSafeData } from './safe-data.ts'
 
 export type JobState = 'running' | 'done' | 'failed' | 'canceled'
 
@@ -41,6 +43,9 @@ declare module 'cordis' {
 
 const PROGRESS_INTERVAL_MS = 100
 const KEEP_FINISHED = 50
+const MAX_JOB_LABEL_CHARS = 500
+const MAX_JOB_DETAIL_CHARS = 2_000
+const MAX_JOB_SUMMARY_BYTES = 48 * 1024
 
 interface JobSink {
   emit(channel: 'job:progress' | 'job:done', snapshot: JobSnapshot): void
@@ -67,7 +72,7 @@ class JobHandle implements Job {
   private progressTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(options: JobOptions, sink: JobSink) {
-    this.label = options.label
+    this.label = sanitizeErrorText(options.label, MAX_JOB_LABEL_CHARS)
     this.total = options.total
     this.cancelable = options.cancelable ?? false
     this.sink = sink
@@ -77,7 +82,7 @@ class JobHandle implements Job {
   progress(done: number, detail?: string): void {
     if (this.state !== 'running') return
     this.done = done
-    if (detail !== undefined) this.detail = detail
+    if (detail !== undefined) this.detail = sanitizeErrorText(detail, MAX_JOB_DETAIL_CHARS)
     const wait = this.lastProgressAt + PROGRESS_INTERVAL_MS - Date.now()
     if (wait <= 0) {
       this.emitProgress()
@@ -95,7 +100,7 @@ class JobHandle implements Job {
     if (this.state !== 'running') return
     this.state = 'done'
     this.endedAt = Date.now()
-    this.summary = summary
+    this.summary = summary === undefined ? undefined : boundedSafeData(summary, MAX_JOB_SUMMARY_BYTES, '任务摘要超过 48 KiB 限制')
     this.settle()
   }
 
@@ -103,7 +108,7 @@ class JobHandle implements Job {
     if (this.state !== 'running') return
     this.state = 'failed'
     this.endedAt = Date.now()
-    this.error = error instanceof Error ? error.message : String(error)
+    this.error = errorMessage(error, '任务执行失败')
     this.settle()
   }
 

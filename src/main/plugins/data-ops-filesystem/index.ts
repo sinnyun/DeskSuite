@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { dirname, extname, isAbsolute, join } from 'node:path'
 import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 
 type FileKind =
   | 'folder'
@@ -425,10 +425,7 @@ function quickAccess(): QuickAccessItem[] {
 
 async function readText(path: string): Promise<{ path: string; content: string; truncated: boolean }> {
   assertAbsolute(path)
-  const stat = await fs.stat(path)
-  if (stat.isDirectory()) throw new Error('文件夹不支持文本预览')
-  if (stat.size > MAX_TEXT_BYTES) throw new Error('文件超过 2MB，已跳过预览')
-  const buffer = await fs.readFile(path)
+  const buffer = await readBoundedFile(path, MAX_TEXT_BYTES, '文件超过 2MB，已跳过预览', '文件夹不支持文本预览')
   if (buffer.subarray(0, 8000).includes(0)) throw new Error('二进制文件不支持文本预览')
   const content = buffer.toString('utf8')
   const truncated = content.length > 200000
@@ -437,12 +434,10 @@ async function readText(path: string): Promise<{ path: string; content: string; 
 
 async function readImage(path: string): Promise<{ path: string; dataUrl: string }> {
   assertAbsolute(path)
-  const stat = await fs.stat(path)
-  if (stat.size > MAX_IMAGE_BYTES) throw new Error('图片超过 12MB，已跳过预览')
   const ext = extname(path).replace('.', '').toLowerCase()
   const mimeType = IMAGE_MIME[ext]
   if (!mimeType) throw new Error('该文件不是可预览的图片格式')
-  const buffer = await fs.readFile(path)
+  const buffer = await readBoundedFile(path, MAX_IMAGE_BYTES, '图片超过 12MB，已跳过预览')
   return { path, dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}` }
 }
 
@@ -450,14 +445,48 @@ async function readMedia(
   path: string
 ): Promise<{ path: string; dataUrl: string; mimeType: string }> {
   assertAbsolute(path)
-  const stat = await fs.stat(path)
-  if (stat.isDirectory()) throw new Error('文件夹没有媒体预览')
-  if (stat.size > MAX_MEDIA_BYTES) throw new Error('音视频超过 64MB，已跳过预览')
   const ext = extname(path).replace('.', '').toLowerCase()
   const mimeType = MEDIA_MIME[ext]
   if (!mimeType) throw new Error('该文件不是可预览的音视频格式')
-  const buffer = await fs.readFile(path)
+  const buffer = await readBoundedFile(path, MAX_MEDIA_BYTES, '音视频超过 64MB，已跳过预览', '文件夹没有媒体预览')
   return { path, mimeType, dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}` }
+}
+
+/**
+ * Read at most maxBytes + 1 bytes from the opened file handle. Checking stat
+ * before readFile() alone is racy: another process can grow or replace the
+ * path between those operations, making readFile() allocate an unbounded
+ * buffer. fstat + bounded reads keep the limit attached to the opened inode.
+ */
+async function readBoundedFile(
+  path: string,
+  maxBytes: number,
+  tooLargeMessage: string,
+  directoryMessage?: string
+): Promise<Buffer> {
+  const handle = await fs.open(path, 'r')
+  try {
+    const stat = await handle.stat()
+    if (stat.isDirectory() && directoryMessage) throw new Error(directoryMessage)
+    if (!stat.isFile()) throw new Error('目标不是普通文件')
+    if (stat.size > maxBytes) throw new Error(tooLargeMessage)
+
+    const chunks: Buffer[] = []
+    let total = 0
+    while (total <= maxBytes) {
+      const remaining = maxBytes + 1 - total
+      if (remaining <= 0) break
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining))
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, total)
+      if (bytesRead === 0) break
+      chunks.push(chunk.subarray(0, bytesRead))
+      total += bytesRead
+      if (total > maxBytes) throw new Error(tooLargeMessage)
+    }
+    return Buffer.concat(chunks, total)
+  } finally {
+    await handle.close()
+  }
 }
 
 function formatEntries(result: ListDirResult): string {
@@ -522,6 +551,20 @@ const filesystemPlugin: Plugin = {
           : await dialog.showOpenDialog({ properties: ['openDirectory'] })
         return result.canceled ? null : result.filePaths[0] ?? null
       }
+    }, {
+      drives: z.tuple([]),
+      getDrivePreferences: z.tuple([]),
+      setDrivePreferences: z.tuple([preferencesSchema]),
+      quickAccess: z.tuple([]),
+      listDir: z.tuple([z.string().min(1).max(32768), z.number().int().min(1).max(MAX_PAGE_SIZE).optional()]),
+      listMore: z.tuple([z.string().uuid(), z.number().int().min(1).max(MAX_PAGE_SIZE).optional()]),
+      statPaths: z.tuple([z.array(z.string().min(1).max(32768)).max(MAX_STAT_PATHS)]),
+      readText: z.tuple([z.string().min(1).max(32768)]),
+      readImage: z.tuple([z.string().min(1).max(32768)]),
+      readMedia: z.tuple([z.string().min(1).max(32768)]),
+      open: z.tuple([z.string().min(1).max(32768)]),
+      reveal: z.tuple([z.string().min(1).max(32768)]),
+      pickDirectory: z.tuple([])
     })
 
     ctx.mcp.registerTool('explorer_drive_preferences', {
@@ -532,7 +575,7 @@ const filesystemPlugin: Plugin = {
         try {
           const result = args.showNetworkDrives === undefined ? await getDrivePreferences() : await setDrivePreferences(args)
           return mcpText(JSON.stringify(result))
-        } catch (error) { return mcpError(String(error)) }
+        } catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('list_drives', {
@@ -555,7 +598,7 @@ const filesystemPlugin: Plugin = {
           const result = cursor ? await listMore(cursor, limit) : await listDir(target, limit)
           return mcpText(formatEntries(result))
         } catch (error) {
-          return mcpError(error instanceof Error ? error.message : String(error))
+          return mcpErrorFrom(error)
         }
       }
     })
@@ -570,8 +613,36 @@ const filesystemPlugin: Plugin = {
           const result = await readText(args.path as string)
           return mcpText(result.content)
         } catch (error) {
-          return mcpError(error instanceof Error ? error.message : String(error))
+          return mcpErrorFrom(error)
         }
+      }
+    })
+
+    ctx.mcp.registerTool('filesystem_preview_image', {
+      description: '读取受大小限制的图片预览，并以 MCP image block 返回；支持 png/jpg/gif/webp/bmp/ico/svg',
+      inputSchema: { path: z.string().min(1).max(32768) },
+      execute: async (args) => {
+        try {
+          const preview = await readImage(args.path as string)
+          const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(preview.dataUrl)
+          if (!match) throw new Error('图片预览结果格式无效')
+          return { content: [{ type: 'image', mimeType: match[1], data: match[2] }] }
+        } catch (error) { return mcpErrorFrom(error) }
+      }
+    })
+
+    ctx.mcp.registerTool('filesystem_inspect_media_preview', {
+      description: '按 64 MiB 有界读取音视频预览并返回 MIME 与字节数；MCP 不传输媒体正文。',
+      inputSchema: { path: z.string().min(1).max(32768) },
+      execute: async (args) => {
+        try {
+          const preview = await readMedia(args.path as string)
+          const match = /^data:[^;,]+;base64,([A-Za-z0-9+/=]+)$/.exec(preview.dataUrl)
+          if (!match) throw new Error('媒体预览结果格式无效')
+          const padding = match[1].endsWith('==') ? 2 : match[1].endsWith('=') ? 1 : 0
+          const byteLength = match[1].length / 4 * 3 - padding
+          return mcpText(JSON.stringify({ path: preview.path, mimeType: preview.mimeType, byteLength }))
+        } catch (error) { return mcpErrorFrom(error) }
       }
     })
   }

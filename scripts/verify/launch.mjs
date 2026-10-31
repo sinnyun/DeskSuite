@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 用法：node scripts/verify/launch.mjs [--build] [--port 9222]
 import { spawn, spawnSync } from 'node:child_process'
-import { closeSync, mkdirSync, openSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { ensureOutDir, outDir, parseFlags, pidFile, projectRoot } from './common.mjs'
@@ -42,10 +42,15 @@ if (typeof flags.profile === 'string') {
   const mcpPort = Number(flags['mcp-port'] || 9600)
   if (!Number.isInteger(mcpPort) || mcpPort < 1 || mcpPort > 65535) throw new Error('--mcp-port must be between 1 and 65535')
   mkdirSync(profile, { recursive: true })
-  writeFileSync(join(profile, 'config.json'), JSON.stringify({
-    window: { width: 1600, height: 1000 },
-    mcp: { port: mcpPort, access, writeRoots: writeRoot ? [writeRoot] : [] }
-  }, null, 2))
+  const configPath = join(profile, 'config.json')
+  if (flags['preserve-config']) {
+    if (!existsSync(configPath)) throw new Error('--preserve-config requires an existing profile config.json')
+  } else {
+    writeFileSync(configPath, JSON.stringify({
+      window: { width: 1600, height: 1000 },
+      mcp: { port: mcpPort, access, writeRoots: writeRoot ? [writeRoot] : [] }
+    }, null, 2))
+  }
   electronArgs.push(`--user-data-dir=${profile}`)
 }
 electronArgs.push('.')

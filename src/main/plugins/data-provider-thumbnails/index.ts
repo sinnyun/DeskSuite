@@ -5,15 +5,20 @@ import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { extname, join } from 'node:path'
 import { z } from 'zod'
+import { mcpErrorFrom, type McpToolResult } from '../../services/mcp'
 import { identity, normalize } from '../../services/paths'
+import { MAX_THUMBNAIL_CACHE_FILE_BYTES, readBoundedThumbnailCacheHandle } from './cache-file'
 
 const CACHE_DIR_NAME = 'thumbs'
 const CACHE_MAGIC = Buffer.from('DSSTHM02')
 const HEADER_BYTES = CACHE_MAGIC.length + 4
+const MAX_CACHE_HEADER_BYTES = 4096
+const MAX_CACHE_FILE_BYTES = MAX_THUMBNAIL_CACHE_FILE_BYTES
 const CACHE_FILE_LIMIT = 20_000
 const DEFAULT_CACHE_BYTE_LIMIT = 512 * 1024 * 1024
 const GENERATION_EDGE = 320
 const RESULT_EDGE = 240
+const THUMBNAIL_DATA_URL_PREFIX = 'data:image/jpeg;base64,'
 const JPEG_QUALITY = 80
 const SLOT_NAME = (index: number): string => `${index.toString().padStart(5, '0')}.thm`
 
@@ -30,6 +35,13 @@ interface CacheHeader {
   sourceSize: number
   sourceMtimeMs: number
 }
+
+const CacheHeaderSchema = z.object({
+  key: z.string().regex(/^[a-f0-9]{40}$/),
+  edge: z.number().int().min(64).max(1024),
+  sourceSize: z.number().finite().nonnegative(),
+  sourceMtimeMs: z.number().finite().nonnegative()
+}).strict()
 
 const cacheDir = join(app.getPath('userData'), CACHE_DIR_NAME)
 const slots = new Map<string, CacheSlot>()
@@ -59,19 +71,16 @@ function encodeBlob(header: CacheHeader, jpeg: Buffer): Buffer {
 }
 
 function decodeBlob(blob: Buffer): { header: CacheHeader; jpeg: Buffer } | null {
-  if (blob.length < HEADER_BYTES || !blob.subarray(0, CACHE_MAGIC.length).equals(CACHE_MAGIC)) return null
+  if (blob.length < HEADER_BYTES || blob.length > MAX_CACHE_FILE_BYTES || !blob.subarray(0, CACHE_MAGIC.length).equals(CACHE_MAGIC)) return null
   const headerLength = blob.readUInt32BE(CACHE_MAGIC.length)
+  if (!headerLength || headerLength > MAX_CACHE_HEADER_BYTES) return null
   const jpegStart = HEADER_BYTES + headerLength
   if (!headerLength || jpegStart >= blob.length) return null
   try {
-    const header = JSON.parse(blob.subarray(HEADER_BYTES, jpegStart).toString('utf8')) as CacheHeader
-    if (
-      typeof header.key !== 'string' ||
-      !Number.isFinite(header.edge) ||
-      !Number.isFinite(header.sourceSize) ||
-      !Number.isFinite(header.sourceMtimeMs)
-    ) return null
-    return { header, jpeg: blob.subarray(jpegStart) }
+    const parsed: unknown = JSON.parse(blob.subarray(HEADER_BYTES, jpegStart).toString('utf8'))
+    const result = CacheHeaderSchema.safeParse(parsed)
+    if (!result.success) return null
+    return { header: result.data, jpeg: blob.subarray(jpegStart) }
   } catch {
     return null
   }
@@ -96,8 +105,15 @@ async function loadCacheIndex(): Promise<void> {
     allocated.add(entry.name)
     const path = join(cacheDir, entry.name)
     try {
-      const [blob, stats] = await Promise.all([fs.readFile(path), fs.stat(path)])
-      if (stats.size === 0) continue
+      const handle = await fs.open(path, 'r')
+      let cacheFile: Awaited<ReturnType<typeof readBoundedThumbnailCacheHandle>>
+      try {
+        cacheFile = await readBoundedThumbnailCacheHandle(handle)
+      } finally {
+        await handle.close()
+      }
+      if (cacheFile.size === 0) continue
+      const blob = cacheFile.bytes
       const decoded = decodeBlob(blob)
       if (!decoded) {
         await fs.writeFile(path, Buffer.alloc(0))
@@ -106,14 +122,17 @@ async function loadCacheIndex(): Promise<void> {
       const slot: CacheSlot = {
         name: entry.name,
         key: decoded.header.key,
-        diskBytes: stats.size,
-        accessedAt: stats.mtimeMs
+        diskBytes: cacheFile.size,
+        accessedAt: cacheFile.mtimeMs
       }
       slots.set(entry.name, slot)
       const previous = byKey.get(slot.key)
       if (!previous || previous.accessedAt < slot.accessedAt) byKey.set(slot.key, slot)
-    } catch {
-      // 损坏或被外部占用的缓存槽位留待后续请求时回收。
+    } catch (error) {
+      // Oversized or changing cache files are discarded like invalid decoded blobs.
+      if (error instanceof Error && /exceeds 2 MiB|changed while being read/.test(error.message)) {
+        await fs.writeFile(path, Buffer.alloc(0)).catch(() => undefined)
+      }
     }
   }
   await pruneCache()
@@ -245,7 +264,22 @@ async function readCache(key: string): Promise<Buffer | null> {
   const slot = byKey.get(key)
   if (!slot) return null
   try {
-    const blob = await fs.readFile(join(cacheDir, slot.name))
+    const path = join(cacheDir, slot.name)
+    const handle = await fs.open(path, 'r')
+    let cacheFile: Awaited<ReturnType<typeof readBoundedThumbnailCacheHandle>>
+    try {
+      cacheFile = await readBoundedThumbnailCacheHandle(handle)
+    } catch {
+      await withWriteLock(() => emptySlot(slot))
+      return null
+    } finally {
+      await handle.close()
+    }
+    if (cacheFile.size > MAX_CACHE_FILE_BYTES) {
+      await withWriteLock(() => emptySlot(slot))
+      return null
+    }
+    const blob = cacheFile.bytes
     const decoded = decodeBlob(blob)
     if (!decoded || decoded.header.key !== key) {
       await withWriteLock(() => emptySlot(slot))
@@ -316,6 +350,20 @@ async function getThumbnail(rawPath: string, requestedEdge?: number): Promise<{ 
   return { dataUrl: `data:image/jpeg;base64,${resized.toString('base64')}` }
 }
 
+const thumbnailGetSchema = z.object({
+  path: z.string().trim().min(1).max(32768),
+  edge: z.number().int().min(64).max(1024).optional()
+}).strict()
+
+async function getThumbnailMcp(args: Record<string, unknown>): Promise<McpToolResult> {
+  try {
+    const { path, edge } = thumbnailGetSchema.parse(args)
+    const { dataUrl } = await getThumbnail(path, edge)
+    if (!dataUrl.startsWith(THUMBNAIL_DATA_URL_PREFIX)) throw new Error('缩略图返回格式无效')
+    return { content: [{ type: 'image', data: dataUrl.slice(THUMBNAIL_DATA_URL_PREFIX.length), mimeType: 'image/jpeg' }] }
+  } catch (error) { return mcpErrorFrom(error, '缩略图生成失败') }
+}
+
 async function getThumbnails(rawPaths: string[], requestedEdge?: number): Promise<Array<{ path: string; dataUrl: string | null }>> {
   if (!Array.isArray(rawPaths)) throw new Error('paths 必须是数组')
   const paths = [...new Set(rawPaths.filter((path): path is string => typeof path === 'string' && Boolean(path.trim())))].slice(0, 64)
@@ -369,7 +417,7 @@ async function getSystemIcon(rawPath: string): Promise<{ dataUrl: string }> {
 
 const thumbnailsPlugin: Plugin = {
   name: 'data-provider-thumbnails',
-  inject: ['ipc', 'settings', 'storage'],
+  inject: ['ipc', 'settings', 'storage', 'mcp'],
   apply(ctx: Context): void {
     ctx.storage.register('data-provider-thumbnails', {
       title: '缩略图缓存',
@@ -386,9 +434,22 @@ const thumbnailsPlugin: Plugin = {
     ctx.ipc.handle('thumbnails', {
       get: (path: string, edge?: number) => getThumbnail(path, edge),
       getMany: (paths: string[], edge?: number) => getThumbnails(paths, edge)
+    }, {
+      get: z.tuple([z.string().trim().min(1).max(32768), z.number().int().min(64).max(1024).optional()]),
+      getMany: z.tuple([z.array(z.string().trim().min(1).max(32768)).max(64), z.number().int().min(64).max(1024).optional()])
     })
     ctx.ipc.handle('fileIcons', {
       get: (path: string) => getSystemIcon(path)
+    }, {
+      get: z.tuple([z.string().trim().min(1).max(32768)])
+    })
+    ctx.mcp.registerTool('thumbnail_get', {
+      description: '读取指定本地普通文件的缩略图，返回最长边不超过 240 像素的 JPEG 图片。此工具只读源文件；缩略图可写入内部缓存。',
+      inputSchema: {
+        path: thumbnailGetSchema.shape.path,
+        edge: thumbnailGetSchema.shape.edge
+      },
+      execute: getThumbnailMcp
     })
   }
 }

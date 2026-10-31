@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises'
 import { basename, isAbsolute, resolve } from 'node:path'
 import type { Context } from 'cordis'
 import { z } from 'zod'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpError, mcpErrorFrom, mcpText } from '../../services/mcp'
 
 const title = z.string().trim().min(1).max(120)
 const entry = z.object({ id: z.string(), name: title, path: z.string().min(1) })
@@ -72,22 +72,26 @@ export default {
     ctx.ipc.handle('quickBookmarks', {
       act,
       complete: (id: string, result: { error?: string; value?: unknown }) => { pending.get(id)?.(result) }
+    }, {
+      act: z.tuple([actionSchema]),
+      complete: z.tuple([z.string().uuid(), z.object({ error: z.string().max(500).optional(), value: z.unknown().optional() }).strict()])
     })
     ctx.mcp.registerTool('quick_bookmarks', {
       description: 'List or manage persistent quick bookmark groups and folder addresses. Deleting bookmarks never deletes files.',
       inputSchema: actionSchema.shape, mutating: true,
       execute: async (args) => {
-        try { return mcpText(JSON.stringify(await act(args))) } catch (error) { return mcpError(String(error)) }
+        try { return mcpText(JSON.stringify(await act(args))) } catch (error) { return mcpErrorFrom(error) }
       }
     })
     ctx.mcp.registerTool('quick_bookmarks_explorer', {
       description: 'Operate the active file pane: navigate, select entries, switch view mode, add selected folders to a bookmark group, or open a bookmark.',
       inputSchema: {
-        action: z.enum(['navigate', 'select', 'addSelected', 'open', 'view']),
+        action: z.enum(['navigate', 'select', 'addSelected', 'open', 'view', 'layout', 'pane']),
         viewMode: z.enum(['list', 'grid', 'gallery', 'grouped']).optional(),
         groupingEnabled: z.boolean().optional(),
         groupBy: z.enum(['kind', 'modifiedMinute', 'rating', 'folder']).optional(),
-        includeChildren: z.boolean().optional(), path: z.string().optional(),
+        includeChildren: z.boolean().optional(), layout: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
+        paneId: z.string().min(1).max(128).optional(), path: z.string().optional(),
         paths: z.array(z.string()).optional(), groupId: z.string().optional(), itemId: z.string().optional()
       }, mutating: true,
       execute: async (args) => {
@@ -99,7 +103,7 @@ export default {
             ctx.ipc.broadcast('quickBookmarks:explorer', { ...args, id })
           })
           return result.error ? mcpError(result.error) : mcpText(JSON.stringify(result.value ?? null))
-        } catch (error) { return mcpError(String(error)) }
+        } catch (error) { return mcpErrorFrom(error) }
       }
     })
   }

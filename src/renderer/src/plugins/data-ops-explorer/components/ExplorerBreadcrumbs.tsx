@@ -2,12 +2,12 @@ import { useMemo } from 'react'
 import type { ReactElement } from 'react'
 import { ChevronRight, FolderTree, HardDrive, Tags, X } from 'lucide-react'
 import { useUiKit } from '../../../workbench/sdk'
-import { explorerStore, useExplorer } from '../store'
+import { explorerStore, useExplorerShallow } from '../store'
 import { splitPath } from '../format'
 
 export function ExplorerBreadcrumbs(): ReactElement {
   const { DesktopButton } = useUiKit()
-  const state = useExplorer()
+  const state = useExplorerShallow((s) => ({ path: s.path, tagFocus: s.tagFocus }))
   const segments = useMemo(() => splitPath(state.path), [state.path])
 
   if (state.tagFocus) {

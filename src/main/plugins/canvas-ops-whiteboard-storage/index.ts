@@ -2,7 +2,7 @@ import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { BoardStorage } from './storage'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpError, mcpErrorFrom, mcpText } from '../../services/mcp'
 
 const storagePlugin: Plugin = {
   name: 'canvas-ops-whiteboard-storage',
@@ -23,6 +23,7 @@ const storagePlugin: Plugin = {
       set: (id: string, json: string) => { assertId(id); return storage.set(id, json) },
       remove: (id: string) => { assertId(id); return storage.remove(id) }
     }
+    const idSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/)
     const pending = new Map<string, (result: { error?: string; value?: unknown }) => void>()
     ctx.effect(() => () => {
       for (const reply of pending.values()) reply({ error: '画板服务已卸载' })
@@ -33,6 +34,13 @@ const storagePlugin: Plugin = {
       complete: (id: string, result: { error?: string; value?: unknown }) => {
         pending.get(id)?.(result)
       }
+    }, {
+      list: z.tuple([]),
+      summaries: z.tuple([]),
+      get: z.tuple([idSchema]),
+      set: z.tuple([idSchema, z.string().max(4 * 1024 * 1024)]),
+      remove: z.tuple([idSchema]),
+      complete: z.tuple([z.string().uuid(), z.object({ error: z.string().max(2048).optional(), value: z.unknown().optional() }).strict()])
     })
     for (const action of ['list', 'get', 'set', 'remove'] as const) {
       ctx.mcp.registerTool(`whiteboard_${action}`, {
@@ -40,7 +48,7 @@ const storagePlugin: Plugin = {
         inputSchema:
           action === 'list'
             ? {}
-            : { id: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/), ...(action === 'set' ? { sceneJson: z.string() } : {}) },
+            : { id: idSchema, ...(action === 'set' ? { sceneJson: z.string().max(4 * 1024 * 1024) } : {}) },
         mutating: action === 'set' || action === 'remove',
         execute: async (args) => {
           try {
@@ -52,7 +60,7 @@ const storagePlugin: Plugin = {
                   : await methods[action](args.id as string)
             return mcpText(JSON.stringify(value))
           } catch (error) {
-            return mcpError(String(error))
+            return mcpErrorFrom(error)
           }
         }
       })
@@ -118,7 +126,7 @@ const storagePlugin: Plugin = {
           })
           return result.error ? mcpError(result.error) : mcpText(JSON.stringify(result.value ?? true))
         } catch (error) {
-          return mcpError(String(error))
+          return mcpErrorFrom(error)
         }
       }
     })

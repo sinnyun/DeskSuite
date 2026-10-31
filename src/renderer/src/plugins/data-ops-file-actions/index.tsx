@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { DragEvent, ReactElement } from 'react'
-import { call, definePlugin, getService, useUiKit, type SelectionService, type SelectionSnapshot } from '../../workbench/sdk'
+import { call, definePlugin, errorText, getService, useUiKit, type SelectionService, type SelectionSnapshot } from '../../workbench/sdk'
 
 export default definePlugin({
   id: 'data-ops-file-actions',
@@ -427,7 +427,7 @@ function undoTitle(op: UndoEntry['op']): string {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error, '文件操作失败')
 }
 
 function formatBytes(bytes: number): string {

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context, Plugin } from 'cordis'
 import { z } from 'zod'
 import { identity, isEqualOrInside, normalize } from '../../services/paths'
-import { mcpError, mcpText } from '../../services/mcp'
+import { mcpErrorFrom, mcpText } from '../../services/mcp'
 
 const PLUGIN = 'data-ops-index-scan'
 const BATCH_SIZE = 500
@@ -38,6 +38,34 @@ function kindFor(path: string): Kind {
   return KIND_EXT[extname(path).slice(1).toLowerCase()] ?? 'other'
 }
 function nextTurn(): Promise<void> { return new Promise((resolve) => setImmediate(resolve)) }
+
+function removeStaleRows(
+  db: Pick<Context['db'], 'all' | 'get' | 'tx' | 'run'>,
+  table: 'files' | 'folders',
+  kind: 'file' | 'folder',
+  roots: string[],
+  runId: string
+): number {
+  let cursor: string | null = null
+  let removed = 0
+  while (true) {
+    const batch: Array<{ path_key: string; path: string }> = cursor === null
+      ? db.all<{ path_key: string; path: string }>(`SELECT path_key,path FROM ${table} ORDER BY path_key DESC LIMIT ?`, BATCH_SIZE)
+      : db.all<{ path_key: string; path: string }>(`SELECT path_key,path FROM ${table} WHERE path_key < ? ORDER BY path_key DESC LIMIT ?`, cursor, BATCH_SIZE)
+    if (!batch.length) break
+    cursor = batch[batch.length - 1].path_key
+    const stale = batch.filter((row) =>
+      roots.some((root) => isEqualOrInside(root, row.path)) &&
+      !db.get('SELECT 1 AS found FROM index_scan_seen WHERE run_id=? AND kind=? AND path_key=?', runId, kind, row.path_key)
+    )
+    if (!stale.length) continue
+    db.tx((tx) => {
+      for (const row of stale) tx.run(`DELETE FROM ${table} WHERE path_key=?`, row.path_key)
+    })
+    removed += stale.length
+  }
+  return removed
+}
 
 const plugin: Plugin = {
   name: PLUGIN,
@@ -138,17 +166,15 @@ const plugin: Plugin = {
             ctx.audit.record({ origin, tool: 'index.scan', allowed: false, planId: job.id, error: `${unreadable} 个路径无法读取；保留旧索引行` })
             return
           }
-          // Only a complete traversal may remove rows absent from this run. Scope is checked in JS to avoid SQL wildcard ambiguity.
-          ctx.db.tx((db) => {
-            const staleFiles = db.all<{ path_key: string; path: string }>('SELECT path_key,path FROM files')
-              .filter((row) => roots.some((root) => isEqualOrInside(root, row.path)) && !db.get('SELECT 1 AS found FROM index_scan_seen WHERE run_id=? AND kind=? AND path_key=?', runId, 'file', row.path_key))
-            const staleFolders = db.all<{ path_key: string; path: string }>('SELECT path_key,path FROM folders')
-              .filter((row) => roots.some((root) => isEqualOrInside(root, row.path)) && !db.get('SELECT 1 AS found FROM index_scan_seen WHERE run_id=? AND kind=? AND path_key=?', runId, 'folder', row.path_key))
-            for (const row of staleFiles) db.run('DELETE FROM files WHERE path_key=?', row.path_key)
-            for (const row of staleFolders.sort((a, b) => b.path.length - a.path.length)) db.run('DELETE FROM folders WHERE path_key=?', row.path_key)
+          // Only a complete traversal may remove rows absent from this run. Each synchronous page is bounded;
+          // cleanup deliberately does not yield between pages so a late cancel cannot leave partial cleanup.
+          const cleanup = ctx.db.tx((db) => {
+            const staleFilesRemoved = removeStaleRows(db, 'files', 'file', roots, runId)
+            const staleFoldersRemoved = removeStaleRows(db, 'folders', 'folder', roots, runId)
             db.run('DELETE FROM index_scan_seen WHERE run_id=?', runId)
+            return { staleFilesRemoved, staleFoldersRemoved }
           })
-          job.finish({ roots, visited, fileCount, folderCount })
+          job.finish({ roots, visited, fileCount, folderCount, ...cleanup })
           ctx.audit.record({ origin, tool: 'index.scan', allowed: true, planId: job.id, items: visited })
         } catch (error) {
           ctx.db.run('DELETE FROM index_scan_seen WHERE run_id=?', runId)
@@ -163,12 +189,16 @@ const plugin: Plugin = {
       start: (roots?: unknown, ignore?: unknown) => scan(roots, ignore),
       cancel: (jobId?: string) => !!jobId && ctx.jobs.cancel(jobId),
       status: () => ({ runningJobId: running?.id ?? null, roots: running?.root ?? null })
+    }, {
+      start: z.tuple([z.array(z.string().min(1).max(32768)).min(1).max(32).optional(), z.array(z.string().min(1).max(1024)).max(256).optional()]),
+      cancel: z.tuple([z.string().uuid().optional()]),
+      status: z.tuple([])
     })
     ctx.mcp.registerTool('index_scan', {
       description: '扫描指定目录并更新本地文件索引；返回后台作业 ID，可由 job:progress/job:done 观察进度',
       inputSchema: { roots: z.array(z.string().min(1)).min(1).max(32).optional(), ignore: z.array(z.string().min(1)).max(256).optional() },
       mutating: true, impact: 'low',
-      execute: async (args) => { try { return mcpText(JSON.stringify(await scan(args.roots, args.ignore, 'mcp'))) } catch (e) { return mcpError(e instanceof Error ? e.message : String(e)) } }
+      execute: async (args) => { try { return mcpText(JSON.stringify(await scan(args.roots, args.ignore, 'mcp'))) } catch (e) { return mcpErrorFrom(e) } }
     })
 
     ctx.commands.register({

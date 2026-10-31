@@ -3,7 +3,7 @@ import { ChevronDown } from 'lucide-react'
 import {
   SlotRenderer,
   useContributions,
-  useLayout,
+  useLayoutShallow,
   useUiKit
 } from '../../../workbench/sdk'
 
@@ -15,7 +15,7 @@ export function BottomDock(): ReactElement | null {
     toggleBottomCollapsed,
     activeBottomTab,
     openBottomTab
-  } = useLayout()
+  } = useLayoutShallow((state) => ({ bottomHeight: state.bottomHeight, bottomCollapsed: state.bottomCollapsed, toggleBottomCollapsed: state.toggleBottomCollapsed, activeBottomTab: state.activeBottomTab, openBottomTab: state.openBottomTab }))
   const tabs = useContributions('bottom.tabs')
 
   if (bottomCollapsed) return null

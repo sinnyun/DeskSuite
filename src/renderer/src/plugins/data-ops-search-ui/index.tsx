@@ -1,24 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Search, FolderOpen, X } from 'lucide-react'
-import { call, definePlugin, useLayout, useUiKit } from '../../workbench/sdk'
-
-interface SearchItem {
-  path: string
-  name: string
-  kind: string
-  size: number
-  mtime_ms: number
-  favorite: number | null
-  rating: number | null
-}
-
-interface SearchResult {
-  items: SearchItem[]
-  total: number
-  limit: number
-  offset: number
-}
+import { call, definePlugin, errorText, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import { searchResultSchema, type SearchResult } from './search-schema'
 
 export default definePlugin({
   id: 'data-ops-search-ui',
@@ -34,13 +18,13 @@ export default definePlugin({
 
 function SearchButton(): ReactElement {
   const { DesktopIconButton } = useUiKit()
-  const { openFloatingPanel } = useLayout()
+  const { openFloatingPanel } = useLayoutShallow((state) => ({ openFloatingPanel: state.openFloatingPanel }))
   return <DesktopIconButton size="xs" icon={<Search className="h-3.5 w-3.5" />} tooltip="搜索已扫描文件" onClick={() => openFloatingPanel('global-search')} />
 }
 
 function SearchPanel(): ReactElement | null {
   const { ThemeFloatingPanel, DesktopInput, DesktopButton } = useUiKit()
-  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayout()
+  const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'global-search'
   const [query, setQuery] = useState('')
   const [result, setResult] = useState<SearchResult | null>(null)
@@ -55,9 +39,17 @@ function SearchPanel(): ReactElement | null {
     let alive = true
     setLoading(true)
     const timer = window.setTimeout(() => {
-      void call<SearchResult>('search', 'query', { query: term, limit: 50, offset })
-        .then((next) => { if (alive) { setResult(next); setError('') } })
-        .catch((cause) => { if (alive) setError(cause instanceof Error ? cause.message : String(cause)) })
+      void call<unknown>('search', 'query', { query: term, limit: 50, offset })
+        .then((raw) => {
+          const decoded = searchResultSchema.safeParse(raw)
+          if (!decoded.success) throw new Error('搜索服务返回了无效结果')
+          const next = decoded.data
+          if (next.limit !== 50 || next.offset !== offset) {
+            throw new Error('搜索服务返回分页信息与当前请求不一致')
+          }
+          if (alive) { setResult(next); setError('') }
+        })
+        .catch((cause) => { if (alive) setError(errorText(cause, '文件搜索失败')) })
         .finally(() => { if (alive) setLoading(false) })
     }, 180)
     return () => { alive = false; window.clearTimeout(timer) }

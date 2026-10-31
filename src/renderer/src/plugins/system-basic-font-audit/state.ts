@@ -1,3 +1,6 @@
+import { z } from 'zod'
+import { errorText } from '../../workbench/sdk'
+
 const STORAGE_KEY = 'desksuite.workbench.font-audit.enabled'
 const STYLE_ID = 'desksuite-font-audit-styles'
 const ENABLED_CLASS = 'desksuite-font-audit'
@@ -24,8 +27,13 @@ const SELECTORS = [
 
 function enabledByDefault(): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY) === 'true'
-  } catch {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved === null) return false
+    const parsed = z.enum(['true', 'false']).safeParse(saved)
+    if (!parsed.success) console.warn('[font-audit] Invalid saved preference; using disabled state')
+    return parsed.success && parsed.data === 'true'
+  } catch (error) {
+    console.warn('[font-audit] Could not restore saved preference', errorText(error, '无法读取字体审查设置'))
     return false
   }
 }

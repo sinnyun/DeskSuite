@@ -31,7 +31,7 @@ Service name: `runtime`
 used by the control center to render read-only / write (low) / write (high) badges. It carries no access
 level; the current level is read separately via `mcp.getAccess`.
 
-`LogEntry` also supports `category`, `traceId`, `phase`, `durationMs`, and `status`. Input/output payloads are credential-redacted and bounded to 48 KB per entry; the main ring buffer retains 3000 entries.
+`LogEntry` also supports `category`, `traceId`, `phase`, `durationMs`, and `status`. Payload structure is retained while credential-key fields and inline credential assignments, bearer tokens, and absolute local paths are redacted. Strings are capped at 12,000 characters, arrays at 100 items, object fields at 200 per level, nesting at 8 levels, and serialized payloads at 48 KB per entry. The in-memory main ring buffer retains 3000 entries and is not persisted to disk.
 
 ## MCP tools provided
 
@@ -62,3 +62,7 @@ level; the current level is read separately via `mcp.getAccess`.
 - Injects `jobs` and `audit` in addition to `ipc`, `mcp`, `config`.
 - MCP `get_job_status({ jobId? })`: returns a retained job snapshot (including `state`, `error`, `summary`), or all retained jobs. Finished jobs are limited to 50; unknown IDs return an error object.
 - MCP `get_audit_logs({ limit?: 1..500 })`: returns persistent audit entries, including background failures after restart.
+
+## Serialization boundary
+
+Each complete log entry is projected to JSON-safe plain values before it is stored or sent through `runtime:log`. Undefined, functions, symbols, BigInts, circular references, throwing getters and prototype keys are normalized before Electron IPC.

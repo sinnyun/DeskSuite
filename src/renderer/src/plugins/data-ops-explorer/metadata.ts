@@ -15,6 +15,7 @@ interface AnnotationsService {
   removeTag(path: string, tag: string): void
   allTags(): string[]
   subscribe(listener: () => void): () => void
+  subscribePath(path: string, listener: () => void): () => void
   getSnapshot(): Readonly<Record<string, EntryMeta>>
   prime(paths: string[]): Promise<void>
 }
@@ -80,8 +81,8 @@ const EMPTY_MAP: Readonly<Record<string, EntryMeta>> = Object.freeze({})
 export function useEntryMeta(path: string): EntryMeta {
   const service = getService<AnnotationsService>('annotations')
   useSyncExternalStore(
-    service?.subscribe ?? noopSubscribe,
-    service?.getSnapshot ?? (() => EMPTY_MAP)
+    service ? (listener) => service.subscribePath(path, listener) : noopSubscribe,
+    service ? () => service.get(path) : () => EMPTY
   )
   return service?.get(path) ?? EMPTY
 }

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentType, ReactElement, ReactNode } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { call, useUiKit } from '../../workbench/sdk'
+import { call, errorText, useUiKit } from '../../workbench/sdk'
+import { useStore } from 'zustand'
 import { groupOptionsStore, type GroupBy } from './group-state'
 
 interface FsEntry {
@@ -118,8 +119,8 @@ function groupFor(entry: FsEntry, groupBy: GroupBy, getRating: (path: string) =>
 
 export function GroupedView({ entries, allEntries, path, filterEntries, prepareEntries, registerEntries, renderLayout, renderGroup, getRating }: GroupedViewProps): ReactElement {
   const { DesktopButton } = useUiKit()
-  const options = useSyncExternalStore(groupOptionsStore.subscribe, groupOptionsStore.getSnapshot)
-  const { groupBy, includeChildren } = options
+  const groupBy = useStore(groupOptionsStore, (state) => state.groupBy)
+  const includeChildren = useStore(groupOptionsStore, (state) => state.includeChildren)
   const [descendants, setDescendants] = useState<FsEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -148,7 +149,7 @@ export function GroupedView({ entries, allEntries, path, filterEntries, prepareE
           found.push(...children)
           for (const child of children) if (child.isDirectory) queue.push(child.path)
         } catch (cause) {
-          if (alive) setError(cause instanceof Error ? cause.message : String(cause))
+          if (alive) setError(errorText(cause, '递归读取分组内容失败'))
         }
       }
       if (alive) {

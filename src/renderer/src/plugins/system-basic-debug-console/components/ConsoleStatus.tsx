@@ -1,13 +1,13 @@
 import type { ReactElement } from 'react'
 import { AlertCircle, Terminal } from 'lucide-react'
-import { useLayout, useLogs, useUiKit } from '../../../workbench/sdk'
+import { useLayoutShallow, useLogs, useUiKit } from '../../../workbench/sdk'
 import { filterLogs, useConsoleView } from '../view'
 
 export function ConsoleStatus(): ReactElement {
   const logs = useLogs()
   const { DesktopButton } = useUiKit()
   const view = useConsoleView()
-  const { openFloatingPanel } = useLayout()
+  const { openFloatingPanel } = useLayoutShallow((state) => ({ openFloatingPanel: state.openFloatingPanel }))
   const errors = logs.filter((entry) => entry.level === 'error').length
   const filtered = filterLogs(logs, view).length
   const filtering = filtered !== logs.length

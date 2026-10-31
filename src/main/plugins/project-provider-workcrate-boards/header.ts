@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 type Json = Record<string, unknown>
 
 export interface NativeBoard {
@@ -22,6 +24,8 @@ export interface HeaderClient {
 }
 
 const NS = 'fileatlas.workcrate'
+const NOTE_BYTES_LIMIT = 64 * 1024
+const ownedNoteSchema = z.object({ namespace: z.literal(NS), version: z.literal(1) }).passthrough()
 const FONT = 'Microsoft YaHei'
 const COLOR_TEXT = '#000000'
 const COLOR_BAND = '#eef4fd'
@@ -52,12 +56,13 @@ function textOf(node: Json): string {
 }
 function parseNote(node: Json): Json | null {
   const raw = object(node.attrs).note
-  if (typeof raw !== 'string') return null
+  if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > NOTE_BYTES_LIMIT) return null
   try {
-    const note = object(JSON.parse(raw))
-    return note.namespace === NS && note.version === 1 ? note : null
+    const parsed = ownedNoteSchema.safeParse(JSON.parse(raw))
+    return parsed.success ? parsed.data : null
   } catch { return null }
 }
+export function hasOwnedNote(node: unknown): boolean { return parseNote(object(node)) !== null }
 function scanDocument(documentValue: unknown): OwnedDocument {
   const document = object(documentValue)
   if (!Array.isArray(document.layers)) throw new Error('VectorCraft 文档缺少图层目录')

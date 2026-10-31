@@ -1,10 +1,10 @@
 import type { ReactElement } from 'react'
 import { PanelsTopLeft } from 'lucide-react'
-import { useLayout, useUiKit } from '../../workbench/sdk'
+import { useLayoutShallow, useUiKit } from '../../workbench/sdk'
 
 export function WhiteboardActivity(): ReactElement {
   const { ActivityButton } = useUiKit()
-  const { activeFloatingPanel, toggleFloatingPanel } = useLayout()
+  const { activeFloatingPanel, toggleFloatingPanel } = useLayoutShallow((state) => ({ activeFloatingPanel: state.activeFloatingPanel, toggleFloatingPanel: state.toggleFloatingPanel }))
   const active = activeFloatingPanel === 'whiteboard'
   return (
     <ActivityButton
