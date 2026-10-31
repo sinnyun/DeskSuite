@@ -5,7 +5,7 @@
 ## 前置条件
 
 - Node 22+（脚本直接使用全局 `fetch` / `WebSocket`）
-- 先执行 `npm run build`（`launch.mjs --build` 可顺带构建）。构建会重新生成 `native/lore-bridge/bin/desksuite-lore-bridge.exe`；**不要提交或推送该本地产物**，它由 GitHub Actions 编译维护，验证结束后用 `git restore native/lore-bridge/bin/desksuite-lore-bridge.exe` 还原。
+- 先执行 `npx electron-vite build` 生成生产产物（`out/renderer` 等）。**开发阶段不要执行 `npm run build` 或 `launch.mjs --build`**，它们会触发 Rust 编译 lore-bridge；`npm run build` 还会覆盖被跟踪的 `native/lore-bridge/bin/desksuite-lore-bridge.exe`（该二进制由 GitHub Actions 维护，如误覆盖用 `git restore native/lore-bridge/bin/desksuite-lore-bridge.exe` 还原，不要提交或推送）。
 - 应用必须由 `launch.mjs` 启动：它会移除 `ELECTRON_RUN_AS_NODE`、附加 `--remote-debugging-port`，并把 pid / 日志写入产物目录
 
 ## 脚本一览
@@ -26,7 +26,7 @@
 | `resources.mjs` | 统一资源链接：多格式原始字节、并发去重、Range/HEAD/ETag、大文件分段、撤销/失联/版本、真实 Leafer 图片与视频播放/跳转，重启恢复；需 ffmpeg 生成隔离样本 | `node scripts/verify/resources.mjs`；重启同 profile 后 `node scripts/verify/resources.mjs --check-restart` |
 | `network-drives.mjs` | 网络盘识别、默认显示/隐藏/恢复、完整驱动器 API 不受影响、按钮/列表 DOM 与截图；相同 profile 重启验证隐藏状态 | `node scripts/verify/network-drives.mjs`；重启后加 `--check-restart` |
 | `quick-bookmarks.mjs` | 收藏分组增删改、多选收藏/同组去重/跨组复用、地址编辑/跳转、非法输入原子拒绝、DOM 几何与 MCP 截图；相同 profile 重启后检查持久化 | `node scripts/verify/quick-bookmarks.mjs`；重启后加 `--check-restart` |
-| `launch.mjs` | 启动应用并等待 CDP 就绪（默认 9222）；支持隔离配置；`--unthrottled` 关闭遮挡时的渲染节流，供截图验收 | `node scripts/verify/launch.mjs --build` 或 `node scripts/verify/launch.mjs --profile artifacts/verify/profiles/task --access full --write-root artifacts/verify/samples --port 9223` |
+| `launch.mjs` | 启动应用并等待 CDP 就绪（默认 9222）；支持隔离配置；`--unthrottled` 关闭遮挡时的渲染节流，供截图验收；`--build` 会触发 Rust 编译，开发阶段不要使用 | `npx electron-vite build && node scripts/verify/launch.mjs` 或 `node scripts/verify/launch.mjs --profile artifacts/verify/profiles/task --access full --write-root artifacts/verify/samples --port 9223` |
 | `stop.mjs` | 结束 `launch.mjs` 启动的实例 | `node scripts/verify/stop.mjs [--force]` |
 | `evaluate.mjs` | 在渲染进程执行 JS 并输出结果 | `node scripts/verify/evaluate.mjs "document.title"` |
 | `mcp.mjs` | MCP 工具列表 / 单次调用 / 冒烟检查 | `node scripts/verify/mcp.mjs smoke` |
@@ -139,7 +139,7 @@ artifacts/verify/
 ## 典型流程
 
 ```bash
-npm run build
+npx electron-vite build
 node scripts/verify/launch.mjs
 node scripts/verify/mcp.mjs smoke
 node scripts/verify/capture.mjs
@@ -153,7 +153,7 @@ node scripts/verify/stop.mjs
 
 阶段验收步骤：
 
-1. 运行 `npm run guard` 和 `npm run typecheck`，再运行 `npm run build`。
+1. 运行 `npm run guard` 和 `npm run typecheck`，再运行 `npx electron-vite build`（开发阶段不要用 `npm run build`，它会触发 Rust 编译）。
 2. 使用 `node scripts/verify/launch.mjs` 启动验证实例。
 3. 运行 `node scripts/verify/mcp.mjs smoke` 确认 MCP 可连接、工具可调用；针对本次改动，再调用相关 MCP 工具或运行对应专项验证脚本。
 4. 使用 `node scripts/verify/evaluate.mjs "<表达式>"` 只读检查改动相关的 DOM、状态或几何尺寸；按本阶段功能通过相关插件 MCP 工具或专项验证脚本执行操作并验证结果。若 MCP 缺少该能力，先补 MCP 工具和验证脚本。

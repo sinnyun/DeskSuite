@@ -22,7 +22,7 @@
 1. 新增/改动插件带 `PORTS.md` + `PORTS_ZH.md`；
 2. `npm run guard` + `npm run typecheck` 通过；
 3. `scripts/verify/` 下有对应脚本并在 `docs/VERIFY.md` 登记，产物落在 `artifacts/verify/`；
-4. `node scripts/verify/launch.mjs --build`、对应端到端脚本与 `stop.mjs` 完成最终实机回归；
+4. 运行 `npx electron-vite build` 后，用 `node scripts/verify/launch.mjs`、对应端到端脚本与 `stop.mjs` 完成最终实机回归（开发阶段不要执行 `npm run build` 或 `launch.mjs --build`，避免触发 Rust 编译）；
 5. 回写本文件第 2 章（如涉及现状）与第 11 章台账。
 
 ---

@@ -9,7 +9,20 @@ npm run build:lore-bridge:debug
 npm run build:lore-bridge
 ```
 
-Development starts build the debug bridge automatically when no binary is present. `npm run build` builds the release bridge before electron-vite; electron-builder copies the resulting executable into `resources/lore-bridge/`.
+Development builds the debug bridge automatically only when no binary is present. `npm run build` builds the release bridge before electron-vite; electron-builder copies the resulting executable into `resources/lore-bridge/`.
+
+## Local development
+
+Do not compile the bridge during development. `npm run dev` skips cargo while the committed binary exists in `native/lore-bridge/bin/`.
+
+Avoid these commands unless you are preparing a release on a machine with Rust 1.96:
+
+- `npm run build`
+- `npm run build:lore-bridge`
+- `npm run build:lore-bridge:debug`
+- `node scripts/verify/launch.mjs --build`
+
+When a production Electron build is needed for verification, use `npx electron-vite build` instead; it builds main, preload, and renderer without touching the bridge. After changing Rust sources, push to `main` (or run the workflow manually) and let CI rebuild and commit the binary.
 
 ## Prebuilt binary from CI
 
