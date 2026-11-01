@@ -92,6 +92,11 @@ Consumes `fs:changed` through a plugin-local Zod decoder before touching pane st
 - `desksuite.explorer.thumbnails` stores only bounded JPEG data URLs for gallery rendering (60 entries / 3.5 MB); source files and metadata remain owned by main-process services.
 - Legacy `desksuite.explorer.meta` is imported once through the annotations IPC service and removed
   only after a successful import. Current annotations are owned by `data-ops-annotations`.
+- `useEntryMeta(path)` subscribes a row to the annotations service through `useSyncExternalStore`.
+  Its `subscribe`/`getSnapshot` pair is memoized per `(path, service)`, so selection, scroll and
+  navigation re-renders reuse the same subscription instead of tearing it down each commit, and the
+  hook returns the validated snapshot rather than re-reading the cache. The hook degrades to a
+  frozen empty meta when the optional `annotations` service is absent.
 
 ## Logs
 

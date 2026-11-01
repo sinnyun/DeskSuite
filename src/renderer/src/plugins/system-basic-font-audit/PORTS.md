@@ -9,3 +9,4 @@
 - Consumes the `commands:action` broadcast for `font-audit.toggle` and `font-audit.set:true|false`.
 - No IPC handlers or renderer services are provided. The shared command provider registers `system.toggle-font-audit` and `system.set-font-audit`, exposed by MCP `command_list` / `command_run`.
 - UI strings are Chinese. The panel has a fixed 420×500 px footprint with internal scrolling.
+- Typography role sizes are read at runtime from the `--ds-type-*` CSS variables on `documentElement` (configured in Settings → Appearance); the role table and mismatch detection follow those live values instead of hard-coded pixels.

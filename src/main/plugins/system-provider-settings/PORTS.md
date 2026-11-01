@@ -8,8 +8,10 @@
 - Settings schemas are validated and serialized in the main process. Plugin namespaces persist below `data/settings.json` through `store`; the built-in `mcp` namespace updates `config.json` so access control takes effect immediately.
 - IPC: `settings.list`, `settings.get(namespace)`, `settings.validate(namespace, value)`, `settings.set(namespace, value)`.
 - Event: `settings:changed` with `{ namespace, value }` after a successful write. Broadcasting `settings:open` asks the renderer to open the settings panel; the payload may carry `{ page: 'runtime' | 'storage' | 'mcp' | 'plugins' }`.
-- MCP tool: `open_settings_page` (UI mutation, parameter `page`) opens a specific settings page.
+- MCP tool: `open_settings_page` (UI mutation) opens a settings page (`runtime` | `storage` | `mcp` | `plugins`) or a namespace page such as `appearance` via `namespace`; one of the two is required. It broadcasts `settings:open` with `{ page?, namespace? }`.
 - MCP tool: `settings_validate` checks a draft without writing it and returns normalized data or issue paths/messages.
+- MCP tool: `set_appearance` (UI mutation) updates the `appearance` namespace field-by-field (`theme`, plus `fontSize.pageTitle/panelTitle/title/sectionTitle/body/label/data` integers 10–32 px); omitted fields keep their current value.
+- Built-in `appearance` namespace: `theme` (light/dark/system) and a `fontSize` object holding per-typography-level pixel sizes (defaults 24/20/18/16/14/13/12 px); the renderer maps these to `--ds-type-*` CSS variables.
 - Invalid persisted namespace data is diagnosed and read as that namespace's validated defaults; the invalid raw value is not rewritten.
 
 ## Storage registration

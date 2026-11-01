@@ -9,3 +9,4 @@
 - 消费 `commands:action` 广播中的 `font-audit.toggle` 与 `font-audit.set:true|false` 动作。
 - 不提供 IPC handler 或渲染层服务。共享命令插件注册 `system.toggle-font-audit` 与 `system.set-font-audit`，由 MCP `command_list` / `command_run` 暴露。
 - 界面文案为中文。面板占用固定 420×500 px，内容区内部滚动。
+- 排版角色字号在运行时从 `documentElement` 上的 `--ds-type-*` CSS 变量读取（由「设置 → 外观」配置）；角色表与不匹配判定跟随这些实时值，不再使用硬编码像素。

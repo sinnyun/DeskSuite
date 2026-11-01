@@ -20,6 +20,17 @@ const plugin: Plugin = {
     ctx.commands.register({ id: 'system.toggle-font-audit', title: '切换字体审查', group: '系统', description: '开启或关闭字体层级颜色审查', ...mutating, run: () => { const action = 'font-audit.toggle'; ctx.ipc.broadcast('commands:action', { action }); return { action } } })
     ctx.commands.register({ id: 'system.set-font-audit', title: '设置字体审查', group: '系统', description: '明确开启或关闭字体层级颜色审查', ...mutating, inputSchema: z.object({ enabled: z.boolean() }), run: (args) => { const enabled = args.enabled === true; const action = `font-audit.set:${enabled}`; ctx.ipc.broadcast('commands:action', { action }); return { action, enabled } } })
     ctx.commands.register({ id: 'system.set-plugin-enabled', title: '启用或停用渲染插件', group: '系统', description: '更新非核心渲染插件的启用状态', ...mutating, inputSchema: z.object({ id: z.string().min(1).max(128), enabled: z.boolean() }), run: (args) => { const action = `plugin.set-enabled:${encodeURIComponent(String(args.id))}:${String(args.enabled)}`; ctx.ipc.broadcast('commands:action', { action }); return { action, id: args.id, enabled: args.enabled } } })
+    // 调试控制台的筛选状态由渲染层插件自行监听（同 annotations:changed 的插件私有频道），
+    // 不挤进命令面板的 commands:action 白名单。
+    const consoleViewInput = z.object({
+      search: z.string().max(512).optional(),
+      source: z.string().max(128).optional(),
+      levels: z.array(z.enum(['info', 'warn', 'error', 'event', 'lifecycle'])).max(5).optional(),
+      categories: z.array(z.enum(['action', 'transfer', 'processing', 'result', 'system'])).max(5).optional(),
+      expanded: z.array(z.string().min(1).max(160)).max(200).optional(),
+      reset: z.boolean().optional()
+    }).strict()
+    ctx.commands.register({ id: 'system.set-debug-console-view', title: '设置调试控制台筛选', group: '系统', description: '设置调试信息面板的搜索词、来源、级别、分类与展开项；省略的字段保持原状', ...mutating, inputSchema: consoleViewInput, run: (args) => { ctx.ipc.broadcast('debug-console:view', args); return { applied: true, ...args } } })
     const actions: Array<[string, string, string, string?]> = [
       ['ui.toggle-zen-mode', '切换专注模式', 'layout.zen.toggle'], ['ui.reset-layout', '重置工作台布局', 'layout.reset'], ['ui.clear-debug-log', '清空调试日志', 'logs.clear'],
       ['system.reload-renderer', '重新载入界面', 'system.reload-renderer'], ['system.open-settings', '打开设置', 'settings.open', 'Ctrl+,'], ['system.open-launcher', '打开启动台', 'launcher.open', 'Ctrl+Shift+P'],

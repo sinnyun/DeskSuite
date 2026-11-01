@@ -1,7 +1,8 @@
-import { definePlugin } from '../../workbench/sdk'
+import { definePlugin, log } from '../../workbench/sdk'
 import { DebugConsoleActivity } from './components/DebugConsoleActivity'
 import { ConsolePanel } from './components/ConsolePanel'
 import { ConsoleStatus } from './components/ConsoleStatus'
+import { consoleViewCommandSchema, consoleViewStore } from './view'
 
 export default definePlugin({
   id: 'system-basic-debug-console',
@@ -28,5 +29,14 @@ export default definePlugin({
       order: 10,
       component: ConsoleStatus
     }
-  ]
+  ],
+  setup: () => window.bridge.onEvent((channel, payload) => {
+    if (channel !== 'debug-console:view') return
+    const parsed = consoleViewCommandSchema.safeParse(payload)
+    if (!parsed.success) {
+      log('warn', 'DebugConsole', '收到无效的调试面板筛选指令', { issues: parsed.error.issues.map((issue) => issue.message) })
+      return
+    }
+    consoleViewStore.applyCommand(parsed.data)
+  })
 })

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { FolderOpen, Settings } from 'lucide-react'
 import { call, errorText, useLayoutShallow, useTheme, useUiKit } from '../../workbench/sdk'
+import { applyFontSize } from './appearance'
 import { AdminSettings, type AdminSettingsSection } from './AdminSettings'
 
 interface SettingsDescriptor {
@@ -23,6 +24,7 @@ interface FieldSchema {
   minimum?: number
   maximum?: number
   format?: string
+  properties?: Record<string, FieldSchema>
 }
 
 const SETTINGS_ERROR_FALLBACK = '设置保存失败，请检查配置后重试'
@@ -37,9 +39,10 @@ function formatSettingsIssues(issues: unknown, namespace: string): string {
     if (path.length !== issue.path.length) return []
     const boundedPath = path.map((part) => typeof part === 'string' ? part.slice(0, 128) : part)
     const rawPath = boundedPath.join('.')
+    const nestedKey = boundedPath.every((part) => typeof part === 'string') ? FIELD_TITLES[`${namespace}.${rawPath}`] : undefined
     const field = boundedPath.length === 1 && typeof boundedPath[0] === 'string'
       ? FIELD_TITLES[`${namespace}.${boundedPath[0]}`] ?? rawPath
-      : rawPath
+      : nestedKey ?? rawPath
     return [`${field || '设置'}：${issue.message.slice(0, 256)}`]
   })
   return lines.length ? errorText(`设置未保存：${lines.join('；')}`, SETTINGS_ERROR_FALLBACK) : ''
@@ -89,6 +92,8 @@ export function SettingsPanel(): ReactElement | null {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
+  const pendingNamespace = useRef('')
+  const reloadToken = useRef(0)
 
   const activeEntry = entries.find((entry) => entry.namespace === active)
   const categoryEntries = entries.filter((entry) => entry.category === category)
@@ -100,11 +105,19 @@ export function SettingsPanel(): ReactElement | null {
   const draft = drafts[active] ?? activeEntry?.value ?? {}
 
   async function reload(): Promise<void> {
+    const token = ++reloadToken.current
     try {
       const next = await call<SettingsDescriptor[]>('settings', 'list')
+      if (token !== reloadToken.current) return
       setEntries(next)
       setDrafts(Object.fromEntries(next.map((entry) => [entry.namespace, { ...entry.value }])))
       if (!active.startsWith('admin:') && !next.some((entry) => entry.namespace === active)) setActive(next.find((entry) => entry.category === category)?.namespace ?? next[0]?.namespace ?? '')
+      const requested = pendingNamespace.current
+      pendingNamespace.current = ''
+      if (requested) {
+        const target = next.find((entry) => entry.namespace === requested)
+        if (target) { setCategory(target.category); setActive(target.namespace) }
+      }
       const appearance = next.find((entry) => entry.namespace === 'appearance')
       const mode = appearance?.value.theme
       if (mode === 'light' || mode === 'dark' || mode === 'system') setMode(mode)
@@ -119,7 +132,9 @@ export function SettingsPanel(): ReactElement | null {
 
   useEffect(() => window.bridge.onEvent((channel, payload) => {
     if (channel === 'settings:open') {
-      const page = (payload as { page?: string } | undefined)?.page
+      const event = payload as { page?: string; namespace?: unknown } | undefined
+      const page = event?.page
+      if (typeof event?.namespace === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(event.namespace)) pendingNamespace.current = event.namespace
       if (page === 'plugins') {
         setCategory('plugin')
         setActive('admin:plugins')
@@ -128,6 +143,7 @@ export function SettingsPanel(): ReactElement | null {
         setActive(`admin:${page}`)
       }
       openFloatingPanel('settings')
+      if (event && typeof event.namespace === 'string') void reload()
     }
     if (channel === 'settings:changed') {
       const event = payload as { namespace?: string }
@@ -140,7 +156,7 @@ export function SettingsPanel(): ReactElement | null {
     setSaved('')
   }
 
-  async function save(): Promise<void> {
+  async function save(options: { successText?: string; applyFontSize?: boolean } = {}): Promise<void> {
     if (!activeEntry) return
     setSaving(true)
     setError('')
@@ -158,8 +174,9 @@ export function SettingsPanel(): ReactElement | null {
       if (active === 'appearance') {
         const mode = value.theme
         if (mode === 'light' || mode === 'dark' || mode === 'system') setMode(mode)
+        if (options.applyFontSize) applyFontSize(value.fontSize)
       }
-      setSaved('已保存')
+      setSaved(options.successText ?? '已保存')
     } catch (cause) {
       setError(settingsErrorText(cause, active))
     } finally {
@@ -190,6 +207,7 @@ export function SettingsPanel(): ReactElement | null {
           {activeEntry && error && <p role="alert" className="mt-2 rounded bg-[var(--ds-status-danger-soft)] p-2 text-xs text-[var(--ds-status-danger)]">{error}</p>}
           {activeEntry && <div className="mt-3 flex shrink-0 items-center justify-end gap-2 border-t border-[var(--ds-border)] pt-3 dark:border-[var(--ds-border)]">
             {saved && <span className="text-xs text-[var(--ds-status-success)]">{saved}</span>}
+            {active === 'appearance' && <DesktopButton size="sm" variant="subtle" disabled={saving || !activeEntry} onClick={() => void save({ successText: '字号已更新并生效', applyFontSize: true })}>{saving ? '更新中…' : '更新字体'}</DesktopButton>}
             <DesktopButton size="sm" variant="primary" disabled={saving || !activeEntry} onClick={() => void save()}>{saving ? '保存中…' : '保存设置'}</DesktopButton>
           </div>}
           </section>
@@ -201,6 +219,14 @@ export function SettingsPanel(): ReactElement | null {
 
 const FIELD_TITLES: Record<string, string> = {
   'appearance.theme': '界面主题',
+  'appearance.fontSize': '层级字号',
+  'appearance.fontSize.pageTitle': '页面标题字号',
+  'appearance.fontSize.panelTitle': '面板标题字号',
+  'appearance.fontSize.title': '内容标题字号',
+  'appearance.fontSize.sectionTitle': '分区标题字号',
+  'appearance.fontSize.body': '正文字号',
+  'appearance.fontSize.label': '标签字号',
+  'appearance.fontSize.data': '辅助信息/数据字号',
   'mcp.access': 'AI 工具访问级别',
   'mcp.writeRoots': '允许访问的目录',
   'indexing.roots': '索引目录',
@@ -213,9 +239,10 @@ const FIELD_TITLES: Record<string, string> = {
   'vectorcraft.port': '控制端口'
 }
 
-function SettingField({ name, namespace, schema, value, onChange }: { name: string; namespace: string; schema: FieldSchema; value: unknown; onChange: (value: unknown) => void }): ReactElement {
+function SettingField({ name, namespace, schema, value, onChange, defaultUnit }: { name: string; namespace: string; schema: FieldSchema; value: unknown; onChange: (value: unknown) => void; defaultUnit?: string }): ReactElement {
   const { DesktopSelect, DesktopInput, DesktopTextarea } = useUiKit()
   const label = schema.title ?? FIELD_TITLES[`${namespace}.${name}`] ?? name
+  const defaultHint = defaultUnit !== undefined && (typeof schema.default === 'number' || typeof schema.default === 'string') ? `默认 ${schema.default}${defaultUnit}` : ''
   if (schema.enum?.length) {
     return <label className="block space-y-1.5 text-xs"><span className="font-medium">{label}</span>{schema.description && <span className="block text-xs text-[var(--ds-text-muted)]">{schema.description}</span>}<DesktopSelect value={String(value ?? '')} options={schema.enum.map((item) => ({ value: String(item), label: String(item) }))} onChange={(next) => onChange(next)} /></label>
   }
@@ -226,8 +253,12 @@ function SettingField({ name, namespace, schema, value, onChange }: { name: stri
     const items = Array.isArray(value) ? value.map(String) : []
     return <div className="space-y-1.5"><label className="text-xs font-medium">{label}</label>{schema.description && <p className="text-xs text-[var(--ds-text-muted)]">{schema.description}</p>}<DesktopTextarea value={items.join('\n')} onChange={(event) => onChange(event.target.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))} className="h-24 w-full resize-none font-mono" placeholder="每行一个路径或规则" />{(name === 'writeRoots' || name === 'roots') && <ChooseDirectory onChoose={(path) => onChange([...new Set([...items, path])])} />}</div>
   }
+  if (schema.type === 'object' && schema.properties) {
+    const objectValue = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+    return <div className="space-y-1.5"><span className="block text-xs font-medium">{label}</span>{schema.description && <span className="block text-xs text-[var(--ds-text-muted)]">{schema.description}</span>}<div className="space-y-2 rounded-lg border border-[var(--ds-border)] p-3 dark:border-[var(--ds-border)]">{Object.entries(schema.properties).map(([childKey, child]) => <SettingField key={childKey} name={`${name}.${childKey}`} namespace={namespace} schema={child} value={objectValue[childKey] ?? child.default} defaultUnit={name === 'fontSize' ? ' px' : undefined} onChange={(next) => onChange({ ...objectValue, [childKey]: next })} />)}</div></div>
+  }
   const isNumber = schema.type === 'number' || schema.type === 'integer'
-  return <label className="block space-y-1.5 text-xs"><span className="font-medium">{label}</span>{schema.description && <span className="block text-xs text-[var(--ds-text-muted)]">{schema.description}</span>}<DesktopInput type={isNumber ? 'number' : 'text'} value={String(value ?? '')} min={schema.minimum} max={schema.maximum} onChange={(event) => onChange(isNumber ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value)} className="w-full" /></label>
+  return <label className="block space-y-1.5 text-xs"><span className="font-medium">{label}{defaultHint && <span className="ml-1.5 font-normal text-[var(--ds-text-subtle)]">{defaultHint}</span>}</span>{schema.description && <span className="block text-xs text-[var(--ds-text-muted)]">{schema.description}</span>}<DesktopInput type={isNumber ? 'number' : 'text'} value={String(value ?? '')} min={schema.minimum} max={schema.maximum} onChange={(event) => onChange(isNumber ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value)} className="w-full" /></label>
 }
 
 function ChooseDirectory({ onChoose }: { onChoose: (path: string) => void }): ReactElement {

@@ -1,4 +1,5 @@
 import { definePlugin } from '../../workbench/sdk'
+import { bootstrapAppearance } from './appearance'
 import { SettingsActivity } from './settings'
 import { SettingsPanel } from './settings'
 
@@ -11,5 +12,6 @@ export default definePlugin({
   contributions: [
     { id: 'settings.open', slotId: 'sidebar.activity.bottom', order: 100, component: SettingsActivity },
     { id: 'settings.panel', slotId: 'floating.panels', order: 90, component: SettingsPanel }
-  ]
+  ],
+  setup: () => bootstrapAppearance()
 })

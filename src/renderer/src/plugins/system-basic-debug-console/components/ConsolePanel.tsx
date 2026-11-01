@@ -44,9 +44,9 @@ function groupEntries(entries: LogEntry[]): LogGroup[] {
 
 function LogRow({ entry }: { entry: LogEntry }): ReactElement {
   const { DesktopIconButton } = useUiKit()
-  const view = useConsoleView()
+  // 只订阅本行的展开位：整店订阅会让任意筛选变化重渲染所有已挂载日志行。
+  const expanded = useConsoleView((state) => state.expanded.includes(entry.id))
   const payload = logPayloadText(entry)
-  const expanded = view.expanded.includes(entry.id)
   const compact = payload.replace(/\s+/g, ' ')
 
   return (
@@ -74,8 +74,7 @@ function LogRow({ entry }: { entry: LogEntry }): ReactElement {
 
 function TraceGroup({ group }: { group: LogGroup }): ReactElement {
   const { DesktopIconButton } = useUiKit()
-  const view = useConsoleView()
-  const expanded = view.expanded.includes(group.id)
+  const expanded = useConsoleView((state) => state.expanded.includes(group.id))
   const latest = group.entries[0]
   const errorCount = group.entries.filter((entry) => entry.status === 'error' || entry.level === 'error').length
   const messageSummary = formatMessage(latest.message).replace(/ · (请求|返回|失败)$/, '')

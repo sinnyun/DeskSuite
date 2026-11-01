@@ -1,5 +1,6 @@
 import { createStore } from 'zustand/vanilla'
 import { subscribeWithSelector } from 'zustand/middleware'
+import type { z } from 'zod'
 import { call, callValidated } from '../../workbench/sdk'
 import {
   annotationTagListSchema,
@@ -37,6 +38,16 @@ export interface AnnotationEntry {
 
 const EMPTY: EntryMeta = Object.freeze({ favorite: false, rating: 0, tags: [] })
 
+// 广播合并窗口：连续写入（逐行收藏/评分、标签树批量变更）各自广播一次，合并后只重拉一轮。
+// 界面写入是乐观更新，窗口只延后与服务端对账，用户看不到延迟。
+const COALESCE_WINDOW_MS = 50
+
+function sameMeta(current: EntryMeta, favorite: boolean, rating: number, tags: string[]): boolean {
+  return current.favorite === favorite && current.rating === rating
+    && current.tags.length === tags.length
+    && current.tags.every((tag, index) => tag === tags[index])
+}
+
 interface AnnotationState {
   entries: MetadataMap
   notes: Readonly<Record<string, string>>
@@ -48,6 +59,9 @@ class AnnotationStore {
   private readonly tagIds = new Map<string, Map<string, number>>()
   private readonly pending = new Set<string>()
   private readonly queuedPaths = new Set<string>()
+  private readonly eventPaths = new Set<string>()
+  private eventNeedsFullRefresh = false
+  private eventTimer: ReturnType<typeof setTimeout> | undefined
   private loadTask: Promise<void> | undefined
   private treeCache: TagItem[] = []
   private treeLoaded = false
@@ -70,11 +84,16 @@ class AnnotationStore {
     this.stopEvents?.()
     this.stopEvents = window.bridge.onEvent((channel, payload) => {
       if (channel !== 'annotations:changed') return
-      if (annotationsChangedSchema.safeParse(payload).success) void this.refreshKnown()
+      const parsed = annotationsChangedSchema.safeParse(payload)
+      if (parsed.success) this.scheduleRefresh(parsed.data)
     })
     void this.tree().catch(() => undefined)
     return () => {
       this.running = false
+      if (this.eventTimer !== undefined) clearTimeout(this.eventTimer)
+      this.eventTimer = undefined
+      this.eventPaths.clear()
+      this.eventNeedsFullRefresh = false
       this.stopEvents?.()
       this.stopEvents = undefined
     }
@@ -223,47 +242,80 @@ class AnnotationStore {
       this.pending.add(path)
       this.queuedPaths.add(path)
     })
-    if (!this.loadTask && this.queuedPaths.size) {
-      const task = Promise.resolve().then(async () => {
-        let failure: unknown
-        while (this.queuedPaths.size) {
-          const batch = [...this.queuedPaths].slice(0, 1000)
-          batch.forEach((path) => this.queuedPaths.delete(path))
-          try {
-            const result = await this.forPaths(batch)
-            const entries = { ...stateStore.getState().entries }
-            const notes = { ...stateStore.getState().notes }
-            for (const path of batch) {
-              const item = result[path]
-              if (!item) continue
-              entries[path] = Object.freeze({
-                favorite: item.favorite,
-                rating: item.rating,
-                tags: item.tags.map((tag) => tag.name)
-              })
-              notes[path] = item.note
-              this.tagIds.set(path, new Map(item.tags.map((tag) => [tag.name, tag.id])))
-            }
-            if (Object.keys(entries).length) stateStore.setState({ entries: Object.freeze(entries), notes: Object.freeze(notes) })
-          } catch (error) {
-            failure ??= error
-          } finally {
-            batch.forEach((path) => this.pending.delete(path))
-          }
-        }
-        if (failure) throw failure
-      }).finally(() => {
-        if (this.loadTask === task) this.loadTask = undefined
-      })
-      this.loadTask = task
-    }
+    if (!this.loadTask && this.queuedPaths.size) this.loadTask = this.drain()
     return this.loadTask ?? Promise.resolve()
   }
 
-  private async refreshKnown(): Promise<void> {
+  private async drain(): Promise<void> {
+    let failure: unknown
+    while (this.queuedPaths.size) {
+      const batch = [...this.queuedPaths].slice(0, 1000)
+      batch.forEach((path) => this.queuedPaths.delete(path))
+      try {
+        const result = await this.forPaths(batch)
+        const entries = { ...stateStore.getState().entries }
+        const notes = { ...stateStore.getState().notes }
+        let entriesChanged = false
+        let notesChanged = false
+        for (const path of batch) {
+          const item = result[path]
+          if (!item) continue
+          const tags = item.tags.map((tag) => tag.name)
+          const previous = entries[path]
+          // 内容未变时保留旧引用，subscribePath 的选择器据此判定「未变化」，避免全行重渲染
+          if (!previous || !sameMeta(previous, item.favorite, item.rating, tags)) {
+            entries[path] = Object.freeze({ favorite: item.favorite, rating: item.rating, tags })
+            entriesChanged = true
+          }
+          if (notes[path] !== item.note) {
+            notes[path] = item.note
+            notesChanged = true
+          }
+          this.tagIds.set(path, new Map(item.tags.map((tag) => [tag.name, tag.id])))
+        }
+        if (entriesChanged) stateStore.setState({ entries: Object.freeze(entries) })
+        if (notesChanged) stateStore.setState({ notes: Object.freeze(notes) })
+      } catch (error) {
+        failure ??= error
+      } finally {
+        batch.forEach((path) => this.pending.delete(path))
+      }
+      // 循环退出后在同一同步帧内交还任务句柄：留给微任务的话，期间入队的路径会没人消费，
+      // 而这些路径仍留在 pending 里，之后每次刷新都会被过滤掉，永远不再更新。
+      if (!this.queuedPaths.size) this.loadTask = undefined
+    }
+    if (failure) throw failure
+  }
+
+  private scheduleRefresh(event: z.infer<typeof annotationsChangedSchema>): void {
+    if (event.kind === 'metadata' && event.paths?.length) {
+      for (const path of event.paths) this.eventPaths.add(path)
+    } else {
+      // 标签树变更或无路径的旧数据导入：影响面未知，仍按整缓存刷新。
+      this.eventNeedsFullRefresh = true
+    }
+    if (this.eventTimer !== undefined) return
+    this.eventTimer = setTimeout(() => {
+      this.eventTimer = undefined
+      void this.flushEventRefresh()
+    }, COALESCE_WINDOW_MS)
+  }
+
+  private async flushEventRefresh(): Promise<void> {
     if (!this.running) return
-    await this.load(Object.keys(stateStore.getState().entries))
-    await this.tree(true).catch(() => this.treeCache)
+    const paths = [...this.eventPaths]
+    const needsFullRefresh = this.eventNeedsFullRefresh
+    this.eventPaths.clear()
+    this.eventNeedsFullRefresh = false
+    const cached = Object.keys(stateStore.getState().entries)
+    if (needsFullRefresh) {
+      await this.load(cached)
+      await this.tree(true).catch(() => this.treeCache)
+      return
+    }
+    // 缓存 key 可能经资源管理器小写化（Windows），比对同样按小写归一。
+    const wanted = new Set(paths.map((path) => path.toLowerCase()))
+    await this.load(cached.filter((path) => wanted.has(path.toLowerCase())))
   }
 
   private setLocal(path: string, value: EntryMeta): void {

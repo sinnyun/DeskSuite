@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import { call, getService } from '../../workbench/sdk'
 
 export interface EntryMeta {
@@ -80,9 +80,11 @@ const EMPTY_MAP: Readonly<Record<string, EntryMeta>> = Object.freeze({})
 
 export function useEntryMeta(path: string): EntryMeta {
   const service = getService<AnnotationsService>('annotations')
-  useSyncExternalStore(
-    service ? (listener) => service.subscribePath(path, listener) : noopSubscribe,
-    service ? () => service.get(path) : () => EMPTY
-  )
-  return service?.get(path) ?? EMPTY
+  // useSyncExternalStore 的 subscribe 换引用就会拆掉旧订阅再重建，而列表行随选择、
+  // 滚动、导航频繁重渲染；按 (path, service) 固定这一对回调，行只订阅一次。
+  const binding = useMemo(() => ({
+    subscribe: (listener: () => void) => service?.subscribePath(path, listener) ?? noopSubscribe(),
+    get: () => service?.get(path) ?? EMPTY
+  }), [path, service])
+  return useSyncExternalStore(binding.subscribe, binding.get)
 }

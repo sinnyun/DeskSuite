@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { ReactElement } from 'react'
 import { Copy, Download, Trash2 } from 'lucide-react'
 import {
@@ -30,7 +31,7 @@ export function ConsoleToolbar(): ReactElement {
   const { DesktopButton } = useUiKit()
   const logs = useLogs()
   const view = useConsoleView()
-  const filtered = filterLogs(logs, view)
+  const filtered = useMemo(() => filterLogs(logs, view), [logs, view])
 
   const copyFiltered = async (): Promise<void> => {
     if (filtered.length === 0) {

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { ReactElement } from 'react'
 import { AlertCircle, Terminal } from 'lucide-react'
 import { useLayoutShallow, useLogs, useUiKit } from '../../../workbench/sdk'
@@ -8,8 +9,11 @@ export function ConsoleStatus(): ReactElement {
   const { DesktopButton } = useUiKit()
   const view = useConsoleView()
   const { openFloatingPanel } = useLayoutShallow((state) => ({ openFloatingPanel: state.openFloatingPanel }))
-  const errors = logs.filter((entry) => entry.level === 'error').length
-  const filtered = filterLogs(logs, view).length
+  // 状态栏常驻，日志每追加一条都会重渲染；两条计数按日志与筛选状态记忆，避免每次渲染重扫整个缓冲。
+  const { errors, filtered } = useMemo(() => ({
+    errors: logs.filter((entry) => entry.level === 'error').length,
+    filtered: filterLogs(logs, view).length
+  }), [logs, view])
   const filtering = filtered !== logs.length
 
   return (

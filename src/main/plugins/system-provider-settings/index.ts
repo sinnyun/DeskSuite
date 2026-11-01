@@ -2,7 +2,7 @@ import type { Context, Plugin } from 'cordis'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { errorMessage } from '../../services/error-text'
-import { mcpText } from '../../services/mcp'
+import { mcpError, mcpText } from '../../services/mcp'
 import { normalize } from '../../services/paths'
 
 export interface SettingsDescriptor {
@@ -166,9 +166,23 @@ const settingsPlugin: Plugin = {
       access: ctx.config.get('mcp').access,
       writeRoots: ctx.config.get('mcp').writeRoots
     }, { title: 'AI 工具与文件权限', category: 'program' })
-    api.register('appearance', z.object({
-      theme: z.enum(['light', 'dark', 'system']).describe('应用主题')
-    }), { theme: 'system' }, { title: '外观', description: '主题与界面显示偏好', category: 'program' })
+    const fontSizeField = () => z.number().int().min(10).max(32).describe('允许范围 10–32 px')
+    const appearanceSchema = z.object({
+      theme: z.enum(['light', 'dark', 'system']).describe('应用主题'),
+      fontSize: z.object({
+        pageTitle: fontSizeField().default(24),
+        panelTitle: fontSizeField().default(20),
+        title: fontSizeField().default(18),
+        sectionTitle: fontSizeField().default(16),
+        body: fontSizeField().default(14),
+        label: fontSizeField().default(13),
+        data: fontSizeField().default(12)
+      }).default({ pageTitle: 24, panelTitle: 20, title: 18, sectionTitle: 16, body: 14, label: 13, data: 12 })
+    })
+    api.register('appearance', appearanceSchema, {
+      theme: 'system',
+      fontSize: { pageTitle: 24, panelTitle: 20, title: 18, sectionTitle: 16, body: 14, label: 13, data: 12 }
+    }, { title: '外观', description: '主题、界面显示偏好与各排版层级字号', category: 'program' })
 
     ctx.reflect.provide('settings', api)
     ctx.ipc.handle('settings', {
@@ -185,12 +199,13 @@ const settingsPlugin: Plugin = {
       set: z.tuple([z.string().regex(namespacePattern), z.unknown()])
     })
     ctx.mcp.registerTool('open_settings_page', {
-      description: 'Open the DeskSuite settings panel at a page: runtime, storage, mcp, or plugins.',
-      inputSchema: { page: z.enum(['runtime', 'storage', 'mcp', 'plugins']) },
+      description: 'Open the DeskSuite settings panel at a page: runtime, storage, mcp, or plugins, or at a settings namespace such as appearance.',
+      inputSchema: { page: z.enum(['runtime', 'storage', 'mcp', 'plugins']).optional(), namespace: z.string().regex(namespacePattern).optional() },
       mutating: true,
       execute: async (args) => {
-        ctx.ipc.broadcast('settings:open', { page: args.page })
-        return mcpText(`已打开设置页：${String(args.page)}`)
+        if (!args.page && !args.namespace) return mcpError('需要 page 或 namespace 参数')
+        ctx.ipc.broadcast('settings:open', { page: args.page, namespace: args.namespace })
+        return mcpText(`已打开设置页：${String(args.page ?? args.namespace)}`)
       }
     })
     ctx.mcp.registerTool('settings_validate', {
@@ -200,6 +215,28 @@ const settingsPlugin: Plugin = {
         value: z.record(z.string(), z.unknown())
       },
       execute: async (args) => mcpText(JSON.stringify(api.validate(String(args.namespace), args.value)))
+    })
+    ctx.mcp.registerTool('set_appearance', {
+      description: 'Update the appearance settings (theme and per-level font sizes). Only provided fields change; others keep their current value.',
+      inputSchema: {
+        theme: z.enum(['light', 'dark', 'system']).optional(),
+        fontSize: z.object({
+          pageTitle: z.number().int().min(10).max(32).optional(),
+          panelTitle: z.number().int().min(10).max(32).optional(),
+          title: z.number().int().min(10).max(32).optional(),
+          sectionTitle: z.number().int().min(10).max(32).optional(),
+          body: z.number().int().min(10).max(32).optional(),
+          label: z.number().int().min(10).max(32).optional(),
+          data: z.number().int().min(10).max(32).optional()
+        }).optional()
+      },
+      mutating: true,
+      execute: async (args) => {
+        const current = await api.get('appearance')
+        const merged = { ...current, ...(args.theme ? { theme: args.theme } : {}), fontSize: { ...(current.fontSize as Record<string, number>), ...(args.fontSize ?? {}) } }
+        const value = await api.set('appearance', merged)
+        return mcpText(`外观设置已更新：${JSON.stringify(value)}`)
+      }
     })
   }
 }
