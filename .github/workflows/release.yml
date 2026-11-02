@@ -50,5 +50,19 @@ jobs:
       - name: Build lore-bridge and app
         run: npm run build
 
+      # electron-builder 会对 exe/blockmap 并发各跑一个 GitHub publisher，
+      # 两个实例同时判定 release 不存在时会在同一 tag 下各建一个 release，
+      # 导致产物分裂；先预创建 draft release 让它们全部复用同一个。
+      - name: Ensure draft release exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1 \
+            || gh release create "${{ github.ref_name }}" \
+                 --repo "${{ github.repository }}" \
+                 --draft --title "DeskSuite ${{ github.ref_name }}" \
+                 --notes "DeskSuite ${{ github.ref_name }}"
+
       - name: Package and publish
         run: npx electron-builder --win nsis --publish always --config electron-builder.config.cjs
