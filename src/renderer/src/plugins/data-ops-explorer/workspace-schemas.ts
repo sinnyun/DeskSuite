@@ -11,9 +11,6 @@ export const PaneSessionStateSchema = z.object({
   tagFilter: z.string().max(512).nullable(),
   favoriteOnly: z.boolean(),
   minRating: z.number().int().min(0).max(5),
-  selectedPaths: z.array(z.string().max(32768)).max(10000),
-  focusedPath: z.string().max(32768).nullable(),
-  scrollAnchor: z.object({ path: z.string().max(32768).nullable(), offset: z.number().finite() }).strict(),
   paneWidths: z.object({
     left: z.number().finite().min(120).max(1200),
     right: z.number().finite().min(120).max(1200),

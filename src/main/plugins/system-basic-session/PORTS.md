@@ -2,19 +2,19 @@
 
 - Domain / class / name: `system` / `basic` / `session`
 - Entry: `index.ts`
-- Injected services: `ipc`, `store`
-- Persistence: version 1 `session.json` and `workspaces.json` documents, registered with the atomic store. Writes are coalesced with a 500 ms debounce; callers may invoke `flush` before an orderly shutdown or explicit checkpoint.
+- Injected services: `ipc`, `store`, `storage`
+- Persistence: version 1 `session.json` and `workspaces.json` documents, registered with the atomic store. Writes are coalesced with a 500 ms debounce; callers may invoke `flush` before an explicit checkpoint, and pending writes are flushed automatically on app quit (`will-quit`).
 
 ## IPC services
 
 ### `session`
 
 - `get()` returns the active session snapshot.
-- `set(patch, paneId?)` merges validated session fields and nested scroll/width values, then schedules persistence. A supplied pane ID updates that pane in the active workspace and mirrors it to `session.json`; without one, the first pane is updated for compatibility.
+- `set(patch, paneId?)` merges validated session fields and nested width values, then schedules persistence. A supplied pane ID updates that pane in the active workspace and mirrors it to `session.json`; without one, the first pane is updated for compatibility.
 - `reset()` restores defaults in the active pane and mirrors that state to `session.json`.
 - `flush()` writes pending session and workspace snapshots immediately.
 
-Session fields include current path, view mode, sort field/order, search and kind/tag/favorite/rating filters, selected/focused paths, scroll anchor path and offset, left/right/bottom pane dimensions, and expanded directories.
+Session fields include current path, view mode, sort field/order, search and kind/tag/favorite/rating filters, left/right/bottom pane dimensions, and expanded directories. Selection, focused path and scroll anchor are deliberately runtime-only: they change on every click/scroll, so the explorer no longer sends or persists them.
 
 ### `workspaces`
 

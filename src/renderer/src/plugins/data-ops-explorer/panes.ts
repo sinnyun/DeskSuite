@@ -44,9 +44,6 @@ const DEFAULT_SESSION: PaneSessionState = {
   tagFilter: null,
   favoriteOnly: false,
   minRating: 0,
-  selectedPaths: [],
-  focusedPath: null,
-  scrollAnchor: { path: null, offset: 0 },
   paneWidths: { left: 268, right: 320, bottom: 220 },
   expandedDirectories: [],
   tagFocus: null
@@ -61,6 +58,7 @@ class ExplorerPanes {
   private loading: Promise<void> | null = null
   private readyToPersist = false
   private persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private lastPersisted = new Map<string, string>()
   private paneSubscriptions = new Map<string, () => void>()
   private readonly persistDelay = 250
 
@@ -153,7 +151,9 @@ class ExplorerPanes {
     this.snapshot = { ...this.snapshot, activePaneId: paneId }
     setActivePaneStore(pane.store)
     void call('workspaces', 'activate', this.snapshot.workspaceId, paneId).catch(() => undefined)
-    void call('session', 'set', pane.store.getSessionState(), pane.id).catch(() => undefined)
+    const state = pane.store.getSessionState()
+    this.lastPersisted.set(pane.store.paneId, JSON.stringify(state))
+    void call('session', 'set', state, pane.id).catch(() => undefined)
   }
 
   private async replaceWorkspace(workspace: WorkspaceDescriptor): Promise<void> {
@@ -188,6 +188,7 @@ class ExplorerPanes {
       if (!retained.has(storeKey)) {
         this.paneSubscriptions.get(storeKey)?.()
         this.paneSubscriptions.delete(storeKey)
+        this.lastPersisted.delete(storeKey)
         const paneId = storeKey.slice(`${previousWorkspaceId}:`.length)
         const timerKey = `${previousWorkspaceId}:${paneId}`
         const timer = this.persistTimers.get(timerKey)
@@ -201,6 +202,7 @@ class ExplorerPanes {
   private watchPane(pane: PaneDescriptor): void {
     const key = pane.store.paneId
     if (this.paneSubscriptions.has(key)) return
+    if (!this.lastPersisted.has(key)) this.lastPersisted.set(key, JSON.stringify(pane.store.getSessionState()))
     this.paneSubscriptions.set(key, pane.store.subscribe(() => this.schedulePersist(pane.id)))
   }
 
@@ -214,9 +216,20 @@ class ExplorerPanes {
     }
     await Promise.all(panes.map(async (pane) => {
       const state = pane.store.getSessionState()
-      await call('workspaces', 'setPane', workspaceId, pane.id, state)
+      if (!this.markPersisted(pane.store.paneId, state)) return
       if (pane.id === activePaneId) await call('session', 'set', state, pane.id)
+      else await call('workspaces', 'setPane', workspaceId, pane.id, state)
     }))
+  }
+
+  private markPersisted(paneKey: string, state: PaneSessionState): boolean {
+    // Store subscribers fire for every state change (loading flags, watcher-driven
+    // entry patches, metadata re-syncs), most of which leave the session fields
+    // untouched; skip those before any IPC leaves the renderer.
+    const key = JSON.stringify(state)
+    if (this.lastPersisted.get(paneKey) === key) return false
+    this.lastPersisted.set(paneKey, key)
+    return true
   }
 
   private schedulePersist(paneId: string): void {
@@ -231,9 +244,11 @@ class ExplorerPanes {
       const pane = this.snapshot.panes.find((item) => item.id === paneId && item.store.paneId === `${workspaceId}:${paneId}`)
       if (!pane) return
       const state = pane.store.getSessionState()
-      void call('workspaces', 'setPane', workspaceId, paneId, state).catch(() => undefined)
+      if (!this.markPersisted(pane.store.paneId, state)) return
       if (paneId === this.snapshot.activePaneId) {
         void call('session', 'set', state, paneId).catch(() => undefined)
+      } else {
+        void call('workspaces', 'setPane', workspaceId, paneId, state).catch(() => undefined)
       }
     }, this.persistDelay)
     ;(timer as { unref?: () => void }).unref?.()

@@ -41,7 +41,7 @@ const METHOD_LABELS: Record<string, string> = {
   'versions.branchGraph': '读取版本分支关系', 'versions.preview': '读取版本预览',
   'watch.setPaneDirectories': '更新窗格监听目录', 'watch.clearPane': '清除窗格目录监听',
   'windowControl.state': '读取窗口状态', 'windowControl.toggleMaximize': '切换窗口最大化状态', 'workspaces.list': '读取工作区列表',
-  'workspaces.setPane': '切换工作区窗格'
+  'workspaces.setPane': '保存工作区窗格状态'
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -97,7 +97,7 @@ const IDENTIFIER_WORDS: Record<string, string> = {
   pagecreate: '新增页面', reorder: '重新排序', updateinfo: '更新信息', quickcreate: '快速创建',
   eagle: 'Eagle', whiteboard: '白板', canvas: '画布', image: '图片', text: '文本', media: '媒体', preview: '预览', clipboardimage: '剪贴板图片',
   reopen: '重新打开', closewindow: '关闭窗口', branchgraph: '分支关系', branchaction: '分支操作',
-  preferencesget: '读取偏好设置', setpane: '切换窗格', setpanedirectories: '设置窗格监听目录',
+  preferencesget: '读取偏好设置', setpane: '保存窗格状态', setpanedirectories: '设置窗格监听目录',
   getmany: '批量获取', forpaths: '按路径批量获取', quickaccess: '快捷访问', getundostack: '读取撤销记录',
   historyimage: '历史图片', loadpreferences: '读取偏好设置', togglemaximize: '切换最大化状态'
 }

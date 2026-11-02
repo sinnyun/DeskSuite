@@ -86,9 +86,12 @@ Consumes `fs:changed` through a plugin-local Zod decoder before touching pane st
 
 ## Renderer storage
 
-- Pane path, view, filters, sorting, selection, focus, scroll anchor, pane widths, expanded
-  directories and tag-aggregate focus (`{ tagId, name }`) are persisted by `workspaces` and mirrored
-  for the active pane by `session`; a restored tag focus reopens the aggregate instead of a folder.
+- Pane path, view, filters, sorting, pane widths, expanded directories and tag-aggregate focus
+  (`{ tagId, name }`) are persisted by `workspaces` and mirrored for the active pane by `session`;
+  a restored tag focus reopens the aggregate instead of a folder. Selection, focused path and
+  scroll anchor stay runtime-only (kept across refresh/watcher reloads via the in-memory restore
+  snapshot, never sent to the session service), and persistence is skipped entirely when a store
+  update leaves the session fields unchanged.
 - `desksuite.explorer.thumbnails` stores only bounded JPEG data URLs for gallery rendering (60 entries / 3.5 MB); source files and metadata remain owned by main-process services.
 - Legacy `desksuite.explorer.meta` is imported once through the annotations IPC service and removed
   only after a successful import. Current annotations are owned by `data-ops-annotations`.

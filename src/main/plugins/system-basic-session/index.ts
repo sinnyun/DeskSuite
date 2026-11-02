@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { app } from 'electron'
 import type { Context } from 'cordis'
 import { z } from 'zod'
 import { errorMessage } from '../../services/error-text'
@@ -9,7 +10,6 @@ const sortOrderSchema = z.enum(['asc', 'desc'])
 const kindFilterSchema = z.enum([
   'all', 'folder', 'code', 'image', 'document', 'data', 'archive', 'video', 'audio', 'other'
 ])
-const scrollAnchorSchema = z.object({ path: z.string().nullable(), offset: z.number().finite() })
 const tagFocusSchema = z.object({ tagId: z.number().int().positive(), name: z.string().min(1) })
 const paneWidthsSchema = z.object({
   left: z.number().finite().min(120).max(1200),
@@ -28,9 +28,6 @@ const sessionSchema = z.object({
   tagFilter: z.string().nullable(),
   favoriteOnly: z.boolean(),
   minRating: z.number().int().min(0).max(5),
-  selectedPaths: z.array(z.string()),
-  focusedPath: z.string().nullable(),
-  scrollAnchor: scrollAnchorSchema,
   paneWidths: paneWidthsSchema,
   expandedDirectories: z.array(z.string()),
   // Missing in older documents: the explorer then falls back to the folder view.
@@ -52,9 +49,6 @@ const defaultSession: SessionState = {
   tagFilter: null,
   favoriteOnly: false,
   minRating: 0,
-  selectedPaths: [],
-  focusedPath: null,
-  scrollAnchor: { path: null, offset: 0 },
   paneWidths: { left: 268, right: 320, bottom: 220 },
   expandedDirectories: [],
   tagFocus: null
@@ -77,7 +71,6 @@ const workspacesSchema = z.object({
 type WorkspacesState = z.infer<typeof workspacesSchema>
 
 const sessionPatchInput = sessionPatchSchema.extend({
-  scrollAnchor: scrollAnchorSchema.partial().optional(),
   paneWidths: paneWidthsSchema.partial().optional()
 })
 const workspaceIdInput = z.string().min(1).max(128)
@@ -213,7 +206,6 @@ export default {
         session = sessionSchema.parse({
           ...session,
           ...patch,
-          scrollAnchor: patch.scrollAnchor ? { ...session.scrollAnchor, ...patch.scrollAnchor } : session.scrollAnchor,
           paneWidths: patch.paneWidths ? { ...session.paneWidths, ...patch.paneWidths } : session.paneWidths
         })
         if (active && targetPane) {
@@ -365,6 +357,13 @@ export default {
       activate: z.tuple([workspaceIdInput, paneIdInput.optional()]),
       remove: z.tuple([workspaceIdInput]),
       flush: z.tuple([])
+    })
+
+    // will-quit 在 window 服务完成窗口状态落盘之后触发，这里兜底补齐防抖窗口内未写盘的会话数据。
+    app.on('will-quit', (event) => {
+      if (!pendingSession && !pendingWorkspaces) return
+      event.preventDefault()
+      void flush().then(() => app.exit(0), () => app.exit(0))
     })
   }
 }

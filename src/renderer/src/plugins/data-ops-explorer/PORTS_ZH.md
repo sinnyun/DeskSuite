@@ -77,7 +77,7 @@
 
 ## 渲染层存储
 
-- 窗格路径、视图、筛选、排序、选择、焦点、滚动锚点、窗格宽度、展开目录与标签聚合焦点（`{ tagId, name }`）由 `workspaces` 持久化；活动栏状态同时镜像到 `session`，恢复标签焦点时直接重新打开聚合视图而非目录。
+- 窗格路径、视图、筛选、排序、窗格宽度、展开目录与标签聚合焦点（`{ tagId, name }`）由 `workspaces` 持久化；活动栏状态同时镜像到 `session`，恢复标签焦点时直接重新打开聚合视图而非目录。选择、焦点路径与滚动锚点只保留在运行时（经内存恢复快照在刷新/监听重载时保持，不发送给会话服务）；store 更新未改变会话字段时整个持久化流程直接跳过。
 - `desksuite.explorer.thumbnails` 仅缓存有界 JPEG data URL（最多 60 项 / 3.5 MB）供画廊渲染；源文件和元数据仍由主进程服务持有。
 - 旧键 `desksuite.explorer.meta` 通过 annotations IPC 导入；仅导入成功后删除。当前注释数据由 `data-ops-annotations` 管理。
 - `useEntryMeta(path)` 经 `useSyncExternalStore` 让行订阅 annotations 服务。其 `subscribe`/`getSnapshot` 按 `(path, service)` 记忆化，选择、滚动和导航引起的重渲染复用同一订阅而不是每次提交都拆建；hook 直接返回校验后的快照，不再二次读取缓存。可选的 `annotations` 服务缺失时降级为固定的空元数据，不崩溃。

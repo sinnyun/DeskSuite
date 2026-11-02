@@ -91,6 +91,9 @@ export interface ExplorerState {
   expandedDirectories: string[]
 }
 
+// Persisted per pane. Selection, focus and scroll stay runtime-only: they change
+// on every click/scroll, so persisting them rewrote both session documents on
+// each interaction without real value.
 export type PaneSessionState = Pick<ExplorerState,
   | 'path'
   | 'viewMode'
@@ -102,12 +105,17 @@ export type PaneSessionState = Pick<ExplorerState,
   | 'tagFilter'
   | 'favoriteOnly'
   | 'minRating'
-  | 'selectedPaths'
-  | 'focusedPath'
-  | 'scrollAnchor'
   | 'paneWidths'
   | 'expandedDirectories'
   | 'tagFocus'
+>
+
+// Superset used to keep selection/scroll stable across in-session reloads (refresh,
+// watcher-triggered restores). Never sent to the session service.
+export type PaneRestoreState = PaneSessionState & Pick<ExplorerState,
+  | 'selectedPaths'
+  | 'focusedPath'
+  | 'scrollAnchor'
 >
 
 const INITIAL_STATE: ExplorerState = {
@@ -262,7 +270,7 @@ export class ExplorerStore {
     }
   }
 
-  async load(path: string, restore?: Partial<PaneSessionState>, retry = 0, preserveCount = 0, inheritedTraceId?: string): Promise<void> {
+  async load(path: string, restore?: Partial<PaneRestoreState>, retry = 0, preserveCount = 0, inheritedTraceId?: string): Promise<void> {
     if (this.disposed) return
     const traceId = inheritedTraceId ?? `explorer-load-${crypto.randomUUID()}`
     const token = ++this.token
@@ -396,7 +404,7 @@ export class ExplorerStore {
       void this.showTagAggregate(this.state.tagFocus)
       return
     }
-    if (this.state.path) void this.load(this.state.path, this.getSessionState(), 0, this.state.entries.length)
+    if (this.state.path) void this.load(this.state.path, this.getRestoreState(), 0, this.state.entries.length)
   }
 
   applyChanges = async (paths: string[], invalidate = false): Promise<void> => {
@@ -719,12 +727,16 @@ export class ExplorerStore {
     tagFilter: this.state.tagFilter,
     favoriteOnly: this.state.favoriteOnly,
     minRating: this.state.minRating,
-    selectedPaths: [...this.state.selectedPaths],
-    focusedPath: this.state.focusedPath,
-    scrollAnchor: { ...this.state.scrollAnchor },
     paneWidths: { ...this.state.paneWidths },
     expandedDirectories: [...this.state.expandedDirectories],
     tagFocus: this.state.tagFocus ? { ...this.state.tagFocus } : null
+  })
+
+  getRestoreState = (): PaneRestoreState => ({
+    ...this.getSessionState(),
+    selectedPaths: [...this.state.selectedPaths],
+    focusedPath: this.state.focusedPath,
+    scrollAnchor: { ...this.state.scrollAnchor }
   })
 
   setSort = (sortField: SortField): void => {

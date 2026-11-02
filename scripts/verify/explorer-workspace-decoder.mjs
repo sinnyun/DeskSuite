@@ -36,7 +36,9 @@ try {
       assert.ok(['list', 'grid', 'gallery', 'grouped'].includes(pane.state.viewMode))
       assert.ok(['name', 'size', 'modifiedAt', 'kind', 'rating'].includes(pane.state.sortField))
       assert.ok(['all', 'folder', 'code', 'image', 'document', 'data', 'archive', 'video', 'audio', 'other'].includes(pane.state.kindFilter))
-      assert.ok(Array.isArray(pane.state.selectedPaths) && Array.isArray(pane.state.expandedDirectories))
+      assert.ok(Array.isArray(pane.state.expandedDirectories))
+      assert.ok(!('selectedPaths' in pane.state) && !('focusedPath' in pane.state) && !('scrollAnchor' in pane.state),
+        'pane state must not carry runtime-only selection/scroll fields')
       assert.ok(pane.state.tagFocus === null || Number.isInteger(pane.state.tagFocus?.tagId) && typeof pane.state.tagFocus?.name === 'string')
       report.panes += 1
     }
@@ -48,7 +50,9 @@ try {
   assert.ok(session && typeof session === 'object' && !Array.isArray(session))
   assert.ok(session.path === null || typeof session.path === 'string')
   assert.ok(['list', 'grid', 'gallery', 'grouped'].includes(session.viewMode))
-  assert.ok(Array.isArray(session.selectedPaths) && Array.isArray(session.expandedDirectories))
+  assert.ok(Array.isArray(session.expandedDirectories))
+  assert.ok(!('selectedPaths' in session) && !('focusedPath' in session) && !('scrollAnchor' in session),
+    'session snapshot must not carry runtime-only selection/scroll fields')
   report.checks.push('MCP session.get returned a valid active-pane fallback snapshot')
 
   const ui = await cdp.evaluate(`(() => ({ workspaceToolbar: !!document.querySelector('[data-workspace-tools]'),
