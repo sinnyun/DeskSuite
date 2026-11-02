@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import { Copy, Lock, RefreshCw } from 'lucide-react'
+import { Copy, Download, Lock, RefreshCw, Upload } from 'lucide-react'
 import {
   call,
   callValidated,
@@ -13,13 +13,14 @@ import {
   type PluginCatalogService
 } from '../../workbench/sdk'
 import { StorageSettings } from './StorageSettings'
-import { mcpAccessSchema, mcpToolInfoSchema, runtimeInfoSchema } from './admin-schemas'
+import { mcpAccessSchema, mcpToolInfoSchema, runtimeInfoSchema, updaterOperationResultSchema, updaterStateSchema } from './admin-schemas'
 import type { z } from 'zod'
 
 export type AdminSettingsSection = 'plugins' | 'runtime' | 'mcp' | 'storage'
 type McpAccess = z.infer<typeof mcpAccessSchema>
 type McpToolInfo = z.infer<typeof mcpToolInfoSchema>
 type RuntimeInfo = z.infer<typeof runtimeInfoSchema>
+type UpdaterState = z.infer<typeof updaterStateSchema>
 
 const NOOP_SUBSCRIBE = (): (() => void) => () => {}
 const EMPTY_CATALOG: PluginCatalogEntry[] = []
@@ -36,6 +37,53 @@ function Field({ label, value }: { label: string; value: string }): ReactElement
 
 function Chips({ items }: { items: string[] }): ReactElement {
   return <div className="flex flex-wrap gap-1.5">{items.map((item) => <span key={item} className="rounded-full border border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] px-2 py-0.5 font-mono text-xs text-[var(--ds-text-secondary)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-muted)] dark:text-[var(--ds-text-secondary)]">{item}</span>)}</div>
+}
+
+function UpdateCard(): ReactElement {
+  const { DesktopButton } = useUiKit()
+  const [state, setState] = useState<UpdaterState | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void callValidated(updaterStateSchema, 'updater', 'get').then((value) => {
+      if (alive) setState(value)
+    }).catch((cause) => { if (alive) setError(errorText(cause, '无法读取更新状态')) })
+    const unsubscribe = window.bridge.onEvent((channel, payload) => {
+      if (channel !== 'updater:state') return
+      const parsed = updaterStateSchema.safeParse(payload)
+      if (parsed.success) setState(parsed.data)
+    })
+    return () => { alive = false; unsubscribe() }
+  }, [])
+
+  const perform = async (method: 'check' | 'download' | 'install'): Promise<void> => {
+    setBusy(true); setError('')
+    try {
+      const result = await callValidated(updaterOperationResultSchema, 'updater', method)
+      if (result !== true) setState(result)
+    } catch (cause) { setError(errorText(cause, '更新操作失败')) }
+    finally { setBusy(false) }
+  }
+
+  const canCheck = Boolean(state?.feedUrl) && state?.packaged === true && !busy
+  const hint = state
+    ? state.packaged
+      ? state.feedUrl ? (state.message ?? '尚未检查更新') : '尚未配置更新源：请打开顶栏「软件更新」面板填写 GitHub 仓库地址'
+      : '开发模式下不可检查或安装更新'
+    : '正在读取更新状态…'
+  return <Card title="应用更新">
+    {state && <><Field label="当前版本" value={state.currentVersion} />{state.availableVersion && <Field label="可用版本" value={state.availableVersion} />}</>}
+    <p className="mt-2 text-xs text-[var(--ds-text-secondary)] dark:text-[var(--ds-text-secondary)]">{hint}</p>
+    {state?.status === 'downloading' && <div className="mt-2 h-1.5 overflow-hidden rounded bg-[var(--ds-surface-muted)] dark:bg-[var(--ds-surface-muted)]"><div className="h-full bg-[var(--ds-accent)] transition-[width] duration-300" style={{ width: `${state.percent ?? 0}%` }} /><div className="mt-1 text-right text-xs text-[var(--ds-text-muted)]">{state.percent ?? 0}%</div></div>}
+    {error && <p role="alert" className="mt-2 text-xs text-[var(--ds-status-danger)]">{error}</p>}
+    <div className="mt-3 flex justify-end gap-2">
+      <DesktopButton size="xs" variant="subtle" icon={<RefreshCw className={`h-3 w-3 ${state?.status === 'checking' ? 'animate-spin' : ''}`} />} disabled={!canCheck} onClick={() => void perform('check')}>获取更新</DesktopButton>
+      {state?.status === 'available' && <DesktopButton size="xs" variant="primary" icon={<Download className="h-3 w-3" />} disabled={busy} onClick={() => void perform('download')}>下载更新</DesktopButton>}
+      {state?.status === 'downloaded' && <DesktopButton size="xs" variant="primary" icon={<Upload className="h-3 w-3" />} disabled={busy} title="退出应用并安装已下载的更新" onClick={() => void perform('install')}>安装更新</DesktopButton>}
+    </div>
+  </Card>
 }
 
 export function AdminSettings({ section }: { section: AdminSettingsSection }): ReactElement {
@@ -86,6 +134,7 @@ export function AdminSettings({ section }: { section: AdminSettingsSection }): R
 
     {section === 'runtime' && (info ? <>
       <Card title="应用"><Field label="名称" value={info.appName} /><Field label="版本" value={info.appVersion} /><Field label="平台" value={`${info.platform} ${info.arch}`} /></Card>
+      <UpdateCard />
       <Card title="运行时"><Field label="Electron" value={info.electron} /><Field label="Chromium" value={info.chrome} /><Field label="Node" value={info.node} /></Card>
       <Card title={`主进程服务（${info.services.length}）`}><Chips items={info.services} /></Card>
       <Card title={`渲染层服务（${services.length}）`}><Chips items={services} /></Card>

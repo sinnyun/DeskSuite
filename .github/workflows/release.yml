@@ -66,3 +66,11 @@ jobs:
 
       - name: Package and publish
         run: npx electron-builder --win nsis --publish always --config electron-builder.config.cjs
+
+      # electron-builder 对预创建的 draft release 只上传附件、不会自动翻为发布态；
+      # draft 对 electron-updater 不可见，必须在这里发布。
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false
