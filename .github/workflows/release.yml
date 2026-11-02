@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      DESKSUITE_GITHUB_OWNER: ${{ github.repository_owner }}
+      DESKSUITE_GITHUB_REPO: ${{ github.event.repository.name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # .npmrc 的 npmmirror electron 镜像面向国内，CI 里改用官方源
+      ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Rust 1.96.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/lore-bridge
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          pkg_version="v$(node -p "require('./package.json').version")"
+          if [ "$pkg_version" != "${{ github.ref_name }}" ]; then
+            echo "::error::Tag ${{ github.ref_name }} does not match package.json version $pkg_version"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build lore-bridge and app
+        run: npm run build
+
+      - name: Package and publish
+        run: npx electron-builder --win nsis --publish always --config electron-builder.config.cjs

@@ -1,3 +1,4 @@
+import './paths'
 import { app, BrowserWindow } from 'electron'
 import { createApp } from './app'
 

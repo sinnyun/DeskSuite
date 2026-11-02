@@ -23,7 +23,8 @@ module.exports = {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
-    createStartMenuShortcut: true
+    createStartMenuShortcut: true,
+    include: 'build/installer.nsh'
   },
   ...(owner && repo
     ? {

@@ -7,6 +7,7 @@ React 19 + Electron 40 + Vite 8（electron-vite 6）+ Cordis 4 插件容器。�
 ```
 src/main/
   app.ts            # 创建根 Context，按序启动内置服务，import.meta.glob 自动聚合插件
+  paths.ts          # 打包版 userData 重定向到安装目录 data\；必须保持为 index.ts 第一个 import
   services/         # 内置服务（Service 子类，手工生命周期）
     config.ts       #   config：userData/config.json 读写
     ipc.ts          #   ipc：bridge:invoke 路由 + bridge:event 广播
@@ -111,3 +112,4 @@ scripts/verify/       # 实机验证与调试脚本（CDP / MCP / 截图），�
 - 深色主题依赖 `.dark` 类，`src/renderer/src/index.css` 必须保留 `@custom-variant dark (&:where(.dark, .dark *))`，否则 Tailwind v4 会退回系统偏好、主题开关失效。
 - cordis 锁定 4.0.0-rc.x 精确版本；升级前先确认 API 变化（Service 基类构造即注册，start/stop 为自行约定的生命周期）。
 - 开发阶段不要运行任何触发 Rust 编译的命令（`npm run build`、`npm run build:lore-bridge`、`npm run build:lore-bridge:debug`、`launch.mjs --build`）。`npm run dev` 在 `native/lore-bridge/bin/desksuite-lore-bridge.exe` 存在时会自动跳过编译；只有 Lore Rust 源码/构建配置/二进制路径变更、手动触发工作流或推送 Lore 版本标签时，GitHub Actions 才编译并提交二进制；普通程序文件提交不触发 Rust 编译。
+- 安装版（packaged）userData 固定重定向到安装目录 `data\`（`src/main/paths.ts` 探测可写后 `setPath`，不可写如 Program Files 时回落 `%APPDATA%`）。`build/installer.nsh` 的 `customRemoveFiles` 保证安装/升级/卸载只清程序文件、不删除 `data\`。开发模式与 `--user-data-dir`（验证 profile）不受影响。发布：推送与 package.json 版本一致的 `v*` 标签触发 `.github/workflows/release.yml`，CI 产出安装包 + `latest.yml` 传 GitHub Releases；更新源在应用设置的「应用更新」里填 GitHub 仓库地址。
