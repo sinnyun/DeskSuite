@@ -199,6 +199,24 @@ const devLabPlugin: Plugin = {
         }
       }
     })
+
+    ctx.mcp.registerTool('dev_open_context_menu', {
+      description: '开发验收：在渲染层打开指定右键菜单区域以便截图检查；zoneId 为界面元素 data-context-zone 属性值（如 explorer.workspace），selector 可指定菜单目标元素（如 [data-entry-path]）模拟在卡片上右键，未命中时回退系统兜底菜单',
+      inputSchema: {
+        zoneId: z.string().min(1).max(128),
+        x: z.number().int().min(0).optional(),
+        y: z.number().int().min(0).optional(),
+        selector: z.string().min(1).max(256).optional()
+      },
+      execute: async (args) => {
+        try {
+          ctx.ipc.broadcast('dev:context-menu', { zoneId: args.zoneId, x: args.x, y: args.y, selector: args.selector })
+          return mcpText(JSON.stringify({ opened: args.zoneId }))
+        } catch (error) {
+          return mcpErrorFrom(error)
+        }
+      }
+    })
   }
 }
 

@@ -7,3 +7,7 @@
 - 消费 resources:changed 刷新列表；消费 resources:action 完成 open/preview/inspect/play/pause/seek/fetch/leafer，并经 IPC resources.complete 回执。fetch 只能读取统一资源协议，响应最多 1 MiB。
 - 关闭/切换面板停止媒体；先销毁图片画布再释放租约。MCP resource_view 是自动化入口，CDP 只做只读断言。
 - 无浏览器持久化、直接文件系统访问、对外渲染服务或用户配置项。
+
+## 右键菜单
+
+面板根节点带 `data-context-zone="resources.panel"`。注册（order 10）在资源卡片（`data-resource-path/-uri/-name/-available`）上提供预览、在系统中显示、复制路径、复制 res:// 资源链接与取消登记（带确认）；源不可用时禁用预览。

@@ -20,7 +20,10 @@ export function RightSidebar(): ReactElement {
 
   if (rightCollapsed) {
     return (
-      <aside className="w-12 bg-[var(--ds-surface)] dark:bg-[var(--ds-surface-dark)] border-l border-[var(--ds-border)] dark:border-[var(--ds-border)] flex flex-col items-center py-3 gap-2 select-none shrink-0 z-10 shadow-xs">
+      <aside
+        className="w-12 bg-[var(--ds-surface)] dark:bg-[var(--ds-surface-dark)] border-l border-[var(--ds-border)] dark:border-[var(--ds-border)] flex flex-col items-center py-3 gap-2 select-none shrink-0 z-10 shadow-xs"
+        data-context-zone="shell.activity"
+      >
         <DesktopIconButton
           size="sm"
           onClick={toggleRightCollapsed}

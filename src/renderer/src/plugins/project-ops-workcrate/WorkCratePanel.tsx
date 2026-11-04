@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { ArrowLeft, ArrowRight, ExternalLink, FolderOpen, Grid2X2, Image, LayoutGrid, Plus, RefreshCw, X } from 'lucide-react'
-import { call, callValidated, errorText, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import { call, callValidated, errorText, getService, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import type { ContextMenuService } from '../../workbench/sdk'
 import { PageManager, type PageExport } from './PageManager'
 import { QuickCreate, type QuickTable } from './QuickCreate'
 import { BasicInformation, PresetInput, materialFields, type FieldPresets } from './BasicInformation'
@@ -327,6 +328,44 @@ export function WorkCratePanel(): ReactElement | null {
     catch (cause) { setError(errorText(cause, '无法打开工程文件夹')) }
   }
 
+  const deleteProject = async (project: WorkCrateProject): Promise<void> => {
+    if (!window.confirm(`删除工程「${project.name}」？VectorCraft 文档文件不会被删除。`)) return
+    setBusy(true); setError(''); setNotice('')
+    try {
+      await call('workcrateProjects', 'delete', project.id)
+      if (selectedProject.current === project.id) { setView('projects'); setSnapshot(null); setActiveBoard(null) }
+      await loadProjects()
+      setNotice(`已删除工程「${project.name}」`)
+    } catch (cause) { setError(errorText(cause, '删除工程失败')) }
+    finally { setBusy(false) }
+  }
+
+  useEffect(() => {
+    const cm = getService<ContextMenuService>('contextMenu')
+    if (!cm) return
+    const stopProjects = cm.register('workcrate.projects', ({ target }) => {
+      const card = target instanceof Element ? target.closest<HTMLElement>('[data-workcrate-project]') : null
+      if (!card) return null
+      const project = projects.find((item) => item.id === card.dataset.workcrateProject)
+      if (!project) return null
+      const docPath = card.dataset.workcrateDocPath ?? ''
+      return [
+        { id: 'open', label: '打开页面管理', onSelect: () => void loadProject(project.id) },
+        { id: 'folder', label: '打开工程文件夹', disabled: !docPath, onSelect: () => { void call('workcrateBoards', 'openProjectFolder', project.id).catch(() => {}) } },
+        { id: 'copyPath', label: '复制路径', disabled: !docPath, onSelect: () => { void call('clipboard', 'writeText', docPath).catch(() => {}) } },
+        { separator: true, id: 'sep-delete' },
+        { id: 'delete', label: '删除工程', danger: true, disabled: busy, onSelect: () => void deleteProject(project) }
+      ]
+    }, { order: 10 })
+    const stopThumbs = cm.register('workcrate.thumbs', ({ target }) => {
+      const node = target instanceof Element ? target.closest<HTMLElement>('[data-board-id]') : null
+      const board = boards.find((item) => item.id === node?.dataset.boardId)
+      if (!board) return null
+      return [{ id: 'edit', label: '编辑页面', onSelect: () => void openPage(board) }]
+    }, { order: 10 })
+    return () => { stopProjects(); stopThumbs() }
+  }, [projects, boards, busy, loadProject, openPage, deleteProject])
+
   if (!isOpen) return null
   const visibleProjects = projects.filter((project) => project.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   return <ThemeFloatingPanel title="WorkCrate" icon={<LayoutGrid className="h-3.5 w-3.5" />} badge={view === 'projects' ? `${projects.length} 个工程` : snapshot?.project.name} isOpen={isOpen} onClose={closeFloatingPanel} initialX={55} initialY={42} initialWidth={1320} initialHeight={820} minWidth={880} minHeight={560} headerActions={<DesktopButton size="xs" variant="ghost" icon={<RefreshCw className="h-3.5 w-3.5" />} disabled={busy} onClick={() => view === 'projects' ? void loadProjects() : void sync()}>刷新</DesktopButton>}>
@@ -337,9 +376,9 @@ export function WorkCratePanel(): ReactElement | null {
         <NavButton active={view === 'page'} disabled={!activeBoard} onClick={() => activeBoard && setView('page')} icon={<Image className="h-3.5 w-3.5"/>}>页面编辑</NavButton>
         <NavButton active={view === 'settings'} onClick={() => void openSettings()} icon={<FolderOpen className="h-3.5 w-3.5"/>}>程序默认信息</NavButton>
       </nav>
-      {view === 'projects' && <section className="flex min-h-0 flex-1 flex-col p-4">
+      {view === 'projects' && <section data-context-zone="workcrate.projects" className="flex min-h-0 flex-1 flex-col p-4">
         <header className="mb-4 flex shrink-0 items-start gap-4"><div className="min-w-0 flex-1"><div data-ds-type="meta" className="ds-type-meta uppercase tracking-wide">Tier 1 · Project Repository · VectorCraft Ready</div><h2 data-ds-type="page-title" className="ds-type-page-title mt-1">项目工程大盘</h2><p data-ds-type="body" className="ds-type-body mt-1 max-w-3xl">每个工程对应一个文件夹和 VectorCraft 原生文档。页面与画布预览由 VectorCraft 提供，物料栏由 WorkCrate 写入原生画布。</p></div><div className="w-60 shrink-0"><DesktopInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索项目"/></div><DesktopButton variant="primary" disabled={busy || !name.trim() || !vectorCraftConfigured} icon={<Plus className="h-4 w-4"/>} onClick={() => void createProject()}>新建工程</DesktopButton></header>
-        <div className="min-h-0 flex-1 overflow-y-auto"><div className="grid grid-cols-1 gap-3 xl:grid-cols-3">{visibleProjects.map((project) => <article key={project.id} className="flex min-h-[400px] flex-col rounded-[var(--ds-radius-panel)] border border-[var(--ds-border)] bg-[var(--ds-surface)] p-3"><div className="flex items-center gap-2"><DesktopButton type="button" size="sm" variant="ghost" onClick={() => void loadProject(project.id)} className="min-w-0 flex-1 justify-start truncate text-left font-semibold">{project.name}</DesktopButton><DesktopIconButton size="xs" icon={<ArrowRight className="h-4 w-4"/>} tooltip="打开页面管理" onClick={() => void loadProject(project.id)}/></div><div className="mt-1 text-xs text-[var(--ds-text-muted)]">{projectCounts[project.id] ?? 0} 个画布 · {new Date(project.createdAt).toLocaleDateString()}</div><DesktopCardButton onClick={() => void loadProject(project.id)} className="mt-3 flex min-h-[260px] flex-1 items-center justify-center overflow-hidden p-2">{projectPreviews[project.id] ? <img src={projectPreviews[project.id]} alt={`${project.name} 首页面板预览`} className="h-full max-h-[320px] w-full object-contain"/> : <div className="flex flex-col items-center gap-2 text-xs text-[var(--ds-text-muted)]"><Image className="h-7 w-7"/>尚未同步画板预览</div>}</DesktopCardButton><div className="mt-2 flex items-center gap-2 border-t border-[var(--ds-border)] pt-2 text-xs text-[var(--ds-text-muted)]"><span className="min-w-0 flex-1 truncate" title={projectPaths[project.id] ?? undefined}>{projectPaths[project.id] ?? 'VectorCraft 原生画板预览'}</span><DesktopButton type="button" size="xs" variant="ghost" onClick={() => void loadProject(project.id)} className="shrink-0">进入页面矩阵</DesktopButton></div></article>)}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto"><div className="grid grid-cols-1 gap-3 xl:grid-cols-3">{visibleProjects.map((project) => <article key={project.id} data-workcrate-project={project.id} data-workcrate-project-name={project.name} data-workcrate-doc-path={projectPaths[project.id] ?? ''} className="flex min-h-[400px] flex-col rounded-[var(--ds-radius-panel)] border border-[var(--ds-border)] bg-[var(--ds-surface)] p-3"><div className="flex items-center gap-2"><DesktopButton type="button" size="sm" variant="ghost" onClick={() => void loadProject(project.id)} className="min-w-0 flex-1 justify-start truncate text-left font-semibold">{project.name}</DesktopButton><DesktopIconButton size="xs" icon={<ArrowRight className="h-4 w-4"/>} tooltip="打开页面管理" onClick={() => void loadProject(project.id)}/></div><div className="mt-1 text-xs text-[var(--ds-text-muted)]">{projectCounts[project.id] ?? 0} 个画布 · {new Date(project.createdAt).toLocaleDateString()}</div><DesktopCardButton onClick={() => void loadProject(project.id)} className="mt-3 flex min-h-[260px] flex-1 items-center justify-center overflow-hidden p-2">{projectPreviews[project.id] ? <img src={projectPreviews[project.id]} alt={`${project.name} 首页面板预览`} className="h-full max-h-[320px] w-full object-contain"/> : <div className="flex flex-col items-center gap-2 text-xs text-[var(--ds-text-muted)]"><Image className="h-7 w-7"/>尚未同步画板预览</div>}</DesktopCardButton><div className="mt-2 flex items-center gap-2 border-t border-[var(--ds-border)] pt-2 text-xs text-[var(--ds-text-muted)]"><span className="min-w-0 flex-1 truncate" title={projectPaths[project.id] ?? undefined}>{projectPaths[project.id] ?? 'VectorCraft 原生画板预览'}</span><DesktopButton type="button" size="xs" variant="ghost" onClick={() => void loadProject(project.id)} className="shrink-0">进入页面矩阵</DesktopButton></div></article>)}</div>
           {!visibleProjects.length && <div className="flex h-64 items-center justify-center text-sm text-[var(--ds-text-subtle)]">{projects.length ? '没有匹配的工程' : '还没有工程，请选择一个文件夹创建 VectorCraft 工程'}</div>}
         </div>
         <div className="mx-auto mt-3 w-full max-w-xl shrink-0 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-3 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]"><div className="flex items-center gap-3"><DesktopInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} placeholder="工程名称"/><DesktopButton variant="primary" disabled={busy || !name.trim() || !vectorCraftConfigured} icon={<Plus className="h-4 w-4"/>} onClick={() => void createProject()}>创建新物料工程（选择文件夹）</DesktopButton></div><p className="mt-2 text-xs text-[var(--ds-text-muted)]">{vectorCraftConfigured ? (name.trim() ? '选择文件夹创建工程后，在页面管理中使用“快速创建”粘贴物料表格。' : '请先输入工程名称，再选择保存文件夹。') : '请先在“程序默认信息”中配置 VectorCraft CLI 可执行文件。'}</p></div>
@@ -350,7 +389,7 @@ export function WorkCratePanel(): ReactElement | null {
       {view === 'quick' && snapshot && <QuickCreate key={snapshot.project.id} initial={quickTable} busy={busy} onBack={() => setView('pages')} onCreate={batchCreate}/>}
 
       {view === 'page' && snapshot && activeBoard && <section className="flex min-h-0 flex-1 flex-col"><header className="flex shrink-0 items-center gap-3 border-b border-[var(--ds-border)] bg-[var(--ds-surface)] px-4 py-2"><DesktopIconButton size="sm" icon={<ArrowLeft className="h-4 w-4"/>} tooltip="返回页面列表" onClick={() => setView('pages')}/><span className="min-w-0 flex-1 truncate text-sm font-medium">{activeBoard.title || `页面${String(activeBoard.index + 1).padStart(2, '0')}`}</span><DesktopButton icon={<Plus className="h-4 w-4"/>} disabled={busy} onClick={() => void createPage()}>新增画板</DesktopButton><DesktopButton variant="ghost" icon={<RefreshCw className="h-4 w-4"/>} disabled={busy} onClick={() => void sync()}>同步工程与预览</DesktopButton><DesktopButton variant="primary" icon={<ExternalLink className="h-4 w-4"/>} disabled={busy || !snapshot.documentPath} onClick={() => void openInVectorCraft()}>在 VectorCraft 中编辑</DesktopButton></header>
-        <div className="grid min-h-0 flex-1 grid-cols-[210px_minmax(0,1fr)_300px]"><aside className="min-h-0 overflow-y-auto border-r border-[var(--ds-border)] p-3 dark:border-[var(--ds-border)]"><div className="mb-2 text-xs font-medium text-[var(--ds-text-muted)]">页面 · 拖动调整顺序</div><div className="space-y-2">{boards.map((board) => <div key={board.id} data-board-id={board.id} draggable={!busy} onDragStart={(event) => { setDraggedBoard(board.id); event.dataTransfer.setData('text/plain', board.id); event.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDraggedBoard(null)} onDragOver={(event) => { if (draggedBoard) { event.preventDefault(); event.dataTransfer.dropEffect = 'move' } }} onDrop={(event) => { event.preventDefault(); void reorderPage(draggedBoard ?? event.dataTransfer.getData('text/plain'), board.id) }} className={draggedBoard === board.id ? 'opacity-40' : ''}><PageThumb board={board} active={board.id === activeBoard.id} onClick={() => void openPage(board)}/></div>)}</div></aside><main className="flex min-h-0 min-w-0 flex-col bg-[var(--ds-surface-subtle)] p-4"><div className="mb-2 flex items-center gap-2 text-xs text-[var(--ds-text-muted)]"><span>VectorCraft 原生画布预览</span><span className="ml-auto">{boardSize(activeBoard)}</span></div><div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded border border-[var(--ds-border)] bg-[var(--ds-surface)] p-4 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">{preview ? <img src={preview} alt={activeBoard.title} className="max-h-full max-w-full object-contain"/> : <div className="text-sm text-[var(--ds-text-subtle)]">同步后显示 VectorCraft 画板缓存</div>}</div></main><aside className="min-h-0 overflow-y-auto border-l border-[var(--ds-border)] bg-[var(--ds-surface)] p-3 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]"><MaterialPanel board={activeBoard} presets={presets} busy={busy} onSave={(info) => void saveMaterialInfo(info)}/></aside></div>
+        <div className="grid min-h-0 flex-1 grid-cols-[210px_minmax(0,1fr)_300px]"><aside data-context-zone="workcrate.thumbs" className="min-h-0 overflow-y-auto border-r border-[var(--ds-border)] p-3 dark:border-[var(--ds-border)]"><div className="mb-2 text-xs font-medium text-[var(--ds-text-muted)]">页面 · 拖动调整顺序</div><div className="space-y-2">{boards.map((board) => <div key={board.id} data-board-id={board.id} draggable={!busy} onDragStart={(event) => { setDraggedBoard(board.id); event.dataTransfer.setData('text/plain', board.id); event.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDraggedBoard(null)} onDragOver={(event) => { if (draggedBoard) { event.preventDefault(); event.dataTransfer.dropEffect = 'move' } }} onDrop={(event) => { event.preventDefault(); void reorderPage(draggedBoard ?? event.dataTransfer.getData('text/plain'), board.id) }} className={draggedBoard === board.id ? 'opacity-40' : ''}><PageThumb board={board} active={board.id === activeBoard.id} onClick={() => void openPage(board)}/></div>)}</div></aside><main className="flex min-h-0 min-w-0 flex-col bg-[var(--ds-surface-subtle)] p-4"><div className="mb-2 flex items-center gap-2 text-xs text-[var(--ds-text-muted)]"><span>VectorCraft 原生画布预览</span><span className="ml-auto">{boardSize(activeBoard)}</span></div><div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded border border-[var(--ds-border)] bg-[var(--ds-surface)] p-4 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">{preview ? <img src={preview} alt={activeBoard.title} className="max-h-full max-w-full object-contain"/> : <div className="text-sm text-[var(--ds-text-subtle)]">同步后显示 VectorCraft 画板缓存</div>}</div></main><aside className="min-h-0 overflow-y-auto border-l border-[var(--ds-border)] bg-[var(--ds-surface)] p-3 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]"><MaterialPanel board={activeBoard} presets={presets} busy={busy} onSave={(info) => void saveMaterialInfo(info)}/></aside></div>
       </section>}
 
       {view === 'settings' && <section className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col overflow-hidden p-5">

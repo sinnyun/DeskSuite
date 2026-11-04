@@ -66,7 +66,10 @@ interface Resources {
   releaseImage(id: string): Promise<void>
 }
 export class BoardEngine {
+  // 只有一个白板引擎实例挂载；右键菜单用它做同步命中测试与坐标换算。
+  static active: BoardEngine | null = null
   readonly app: App
+  private readonly viewEl: HTMLElement
   private readonly snap: Snap
   private readonly ruler: Ruler
   private nodes = new Map<string, UI>()
@@ -102,6 +105,8 @@ export class BoardEngine {
     private board: CanvasService,
     viewport: HTMLElement = mount
   ) {
+    BoardEngine.active = this
+    this.viewEl = mount
     this.app = new App({
       view: mount,
       width: viewport.clientWidth || 720,
@@ -983,6 +988,25 @@ export class BoardEngine {
       })
     }
   }
+  hitAtClient(clientX: number, clientY: number): { kind: 'node' | 'group'; id: string } | null {
+    try {
+      const rect = this.viewEl.getBoundingClientRect()
+      let ui: IUI | undefined = this.app.tree.selector?.getByPoint({ x: clientX - rect.left, y: clientY - rect.top }, 0)?.target as IUI | undefined
+      while (ui) {
+        if (ui.id && this.nodes.has(ui.id)) return { kind: 'node', id: ui.id }
+        if (ui.id && this.groups.has(ui.id)) return { kind: 'group', id: ui.id }
+        ui = ui.parent as IUI | undefined
+      }
+    } catch { /* 画布尚未渲染或已销毁时视为未命中 */ }
+    return null
+  }
+
+  clientToBoard(clientX: number, clientY: number): { x: number; y: number } {
+    const rect = this.viewEl.getBoundingClientRect()
+    const view = this.board.getSnapshot().scene.view
+    return { x: (clientX - rect.left - view.x) / view.zoom, y: (clientY - rect.top - view.y) / view.zoom }
+  }
+
   fit(selection = false): void {
     const state = this.board.getSnapshot(),
       nodes = state.scene.nodes.filter((n) => !selection || state.selection.includes(n.id))
@@ -1014,6 +1038,7 @@ export class BoardEngine {
   destroy(): void {
     if (this.app.editor.innerEditing) this.app.editor.closeInnerEditor()
     this.disposed = true
+    if (BoardEngine.active === this) BoardEngine.active = null
     if (this.viewCommitFrame) cancelAnimationFrame(this.viewCommitFrame)
     this.snap.enable(false)
     this.snap.destroy()

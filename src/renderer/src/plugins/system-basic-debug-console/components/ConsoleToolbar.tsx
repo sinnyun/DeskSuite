@@ -17,7 +17,7 @@ import {
 } from '../view'
 import { formatMessage, levelLabel, phaseLabel, sourceLabel } from '../labels'
 
-function serialize(entries: ReturnType<typeof filterLogs>): string {
+export function serialize(entries: ReturnType<typeof filterLogs>): string {
   return [...entries]
     .reverse()
     .map((entry) => {

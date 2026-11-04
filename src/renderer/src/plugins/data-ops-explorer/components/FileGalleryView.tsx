@@ -31,7 +31,7 @@ function Stage({ entry }: { entry: FsEntry }): ReactElement {
   const zoomable = preview.status === 'image' || preview.status === 'text'
 
   return (
-    <div data-gallery-stage={entry.path} className="flex-1 flex flex-col items-center justify-center p-4 relative min-w-0 min-h-0 overflow-hidden">
+    <div data-gallery-stage={entry.path} data-entry-path={entry.path} data-entry-name={entry.name} data-entry-dir={entry.isDirectory ? '1' : '0'} className="flex-1 flex flex-col items-center justify-center p-4 relative min-w-0 min-h-0 overflow-hidden">
       <div className="absolute top-3 right-3 flex items-center gap-1 z-10 bg-[var(--ds-surface-raised)] p-1 rounded-[var(--ds-radius-panel)] border border-[var(--ds-border)] shadow-xs">
         <DesktopIconButton
           size="xs"

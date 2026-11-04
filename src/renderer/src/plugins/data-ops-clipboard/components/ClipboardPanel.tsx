@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactElement } from 'react'
 import { z } from 'zod'
 import { Archive, Clipboard, ClipboardPaste, ClipboardPen, FileImage, FileText, Image as ImageIcon, Link2, Pencil, Plus, RefreshCw, Search, Star, Trash2, Type, Upload, X } from 'lucide-react'
-import { call, callValidated, errorText, useLayoutShallow, useUiKit } from '../../../workbench/sdk'
+import { call, callValidated, errorText, getService, useLayoutShallow, useUiKit, type ContextMenuService } from '../../../workbench/sdk'
 
 const LEGACY_HISTORY_KEY = 'desksuite.clipboard.history'
 const POLL_MS = 1500
@@ -66,7 +66,7 @@ function HistoryCard({ item, active, groupName, onSelect, onFavorite, onRemove }
   }, [item.id, item.kind])
   const Icon = item.kind === 'image' ? FileImage : item.category === 'link' ? Link2 : FileText
   return (
-    <div onClick={onSelect} className={`group relative flex w-full min-w-0 cursor-pointer flex-col rounded-lg border p-2.5 text-left transition ${active ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] dark:bg-[var(--ds-accent-soft)]' : 'border-[var(--ds-border)] bg-[var(--ds-surface)] hover:border-[var(--ds-accent)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]'}`}>
+    <div onClick={onSelect} data-clip-id={item.id} data-clip-favorite={item.favorite ? '1' : '0'} className={`group relative flex w-full min-w-0 cursor-pointer flex-col rounded-lg border p-2.5 text-left transition ${active ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] dark:bg-[var(--ds-accent-soft)]' : 'border-[var(--ds-border)] bg-[var(--ds-surface)] hover:border-[var(--ds-accent)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]'}`}>
       <span className="flex min-w-0 items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--ds-surface-muted)] text-[var(--ds-text-muted)] dark:bg-[var(--ds-surface-muted)]"><Icon className="h-4 w-4"/></span><span data-ds-type="body" className="ds-type-body min-w-0 flex-1 truncate font-medium">{item.kind === 'image' ? '剪贴板图片' : (item.content ?? '').replace(/\s+/g, ' ').slice(0, 96) || '空文本'}</span><span className="flex shrink-0 items-center gap-0.5 opacity-60 group-hover:opacity-100"><span role="button" tabIndex={0} title={item.favorite ? '取消收藏' : '收藏'} onClick={(event) => { event.stopPropagation(); onFavorite() }} onKeyDown={(event) => { if (event.key === 'Enter') { event.stopPropagation(); onFavorite() } }} className={`rounded p-1 ${item.favorite ? 'text-[var(--ds-status-warning)]' : 'text-[var(--ds-text-subtle)] hover:text-[var(--ds-status-warning)]'}`}><Star className="h-3.5 w-3.5" fill={item.favorite ? 'currentColor' : 'none'}/></span><span role="button" tabIndex={0} title="移除记录" onClick={(event) => { event.stopPropagation(); onRemove() }} onKeyDown={(event) => { if (event.key === 'Enter') { event.stopPropagation(); onRemove() } }} className="rounded p-1 text-[var(--ds-text-subtle)] hover:text-[var(--ds-status-danger)]"><X className="h-3.5 w-3.5"/></span></span></span>
       {item.kind === 'image' && image && <img src={image} alt="剪贴板图片预览" className="mt-2 h-24 w-full rounded-md border border-[var(--ds-border)] bg-[var(--ds-surface)] object-contain dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-inset)]"/>}
       <span className="mt-2 flex items-center gap-2"><span data-ds-type="meta" className="ds-type-meta">{new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><span data-ds-type="meta" className="ds-type-meta">{item.kind === 'image' ? '图片' : `${(item.content ?? '').length} 字 · ${categoryNames[item.category]}`}</span><span data-ds-type="label" className="ds-type-label ml-auto rounded-full border border-[var(--ds-border)] px-1.5 py-0.5">{groupName ?? '未分组'}</span></span>
@@ -75,7 +75,7 @@ function HistoryCard({ item, active, groupName, onSelect, onFavorite, onRemove }
 }
 
 export function ClipboardPanel(): ReactElement | null {
-  const { ThemeFloatingPanel, DesktopButton, DesktopIconButton, DesktopInput, DesktopSelect, DesktopTextarea } = useUiKit()
+  const { ThemeFloatingPanel, DesktopButton, DesktopIconButton, DesktopInput, DesktopSelect, DesktopTextarea, prompt } = useUiKit()
   const { floatingPanelOpen, activeFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'clipboard'
   const [current, setCurrent] = useState('')
@@ -165,10 +165,14 @@ export function ClipboardPanel(): ReactElement | null {
     } catch (cause) { notify(errorText(cause, '删除分组失败')) }
   }
   const renameGroup = async (group: ClipboardGroup): Promise<void> => {
-    const name = window.prompt('重命名分组', group.name)
+    const name = await prompt({ title: '重命名分组', value: group.name, confirmText: '保存' })
     if (name === null || !name.trim()) return
     try { setGroups(await callValidated(groupsSchema, 'clipboard', 'renameGroup', group.id, name)) }
     catch (cause) { notify(errorText(cause, '重命名分组失败')) }
+  }
+  const createGroupNamed = async (name: string): Promise<void> => {
+    try { setGroups(await callValidated(groupsSchema, 'clipboard', 'createGroup', name)) }
+    catch (cause) { notify(errorText(cause, '创建分组失败')) }
   }
   const assignGroup = async (groupId: string): Promise<void> => {
     if (!selected) return
@@ -215,6 +219,56 @@ export function ClipboardPanel(): ReactElement | null {
   }
   const startNewText = (): void => { setSelectedId(''); setNewText(true); setDetailDraft('') }
 
+  useEffect(() => {
+    const contextMenu = getService<ContextMenuService>('contextMenu')
+    if (!contextMenu) return
+    return contextMenu.register('clipboard.panel', (context) => {
+      const itemEl = context.target.closest('[data-clip-id]')
+      if (itemEl) {
+        const id = itemEl.getAttribute('data-clip-id') ?? ''
+        const item = history.find((entry) => entry.id === id)
+        if (!item) return null
+        return [
+          { id: 'clip-use', label: '写回剪贴板', onSelect: () => { void call('clipboard', 'useHistory', item.id).then(() => refreshHistory()).catch((cause) => notify(errorText(cause, '写回失败'))) } },
+          { id: 'clip-copy', label: '复制文本', disabled: item.kind !== 'text' ? '图片记录没有文本内容' : !item.content, onSelect: () => { if (item.content) void call('clipboard', 'writeText', item.content).catch(() => {}) } },
+          { id: 'clip-edit', label: '编辑草稿', onSelect: () => { setSelectedId(item.id); setNewText(false) } },
+          { id: 'clip-favorite', label: '收藏', checked: item.favorite, onSelect: () => { void toggleFavorite(item) } },
+          { id: 'clip-remove', label: '删除此条', danger: true, onSelect: () => { void removeHistory(item) } }
+        ]
+      }
+      const groupEl = context.target.closest('[data-clip-group]')
+      if (groupEl) {
+        const id = groupEl.getAttribute('data-clip-group') ?? ''
+        const group = groups.find((entry) => entry.id === id)
+        if (!group) return null
+        return [
+          { id: 'clip-group-rename', label: '重命名…', onSelect: () => { void renameGroup(group) } },
+          {
+            id: 'clip-group-delete',
+            label: '删除分组',
+            danger: true,
+            onSelect: () => {
+              if (!window.confirm(`删除分组「${group.name}」？分组内的记录会回到未分组。`)) return
+              void deleteGroup(group)
+            }
+          }
+        ]
+      }
+      return [
+        {
+          id: 'clip-group-new',
+          label: '新建分组…',
+          onSelect: () => {
+            void prompt({ title: '新建剪贴板分组', placeholder: '分组名称', confirmText: '创建' })
+              .then((name) => { if (name?.trim()) return createGroupNamed(name.trim()) })
+              .catch(() => {})
+          }
+        },
+        { id: 'clip-clear', label: `清空临时记录（${counts.temporary}）`, disabled: !counts.temporary ? '没有临时记录' : false, danger: true, onSelect: () => { void clearTemporary() } }
+      ]
+    }, { order: 10 })
+  }, [history, groups, counts.temporary, prompt])
+
   const navItems: Array<[ClipboardFilter, string, number, ReactElement]> = [
     ['all', '全部历史', counts.all, <Clipboard className="h-4 w-4"/>], ['favorites', '收藏', counts.favorites, <Star className="h-4 w-4"/>], ['temporary', '临时', counts.temporary, <Archive className="h-4 w-4"/>]
   ]
@@ -222,14 +276,14 @@ export function ClipboardPanel(): ReactElement | null {
 
   return (
     <ThemeFloatingPanel title="剪贴板工作台" icon={<ClipboardPen className="w-3.5 h-3.5"/>} badge={`${history.length} 条`} isOpen={isOpen} onClose={closeFloatingPanel} initialX={48} initialY={50} initialWidth={1260} initialHeight={760} minWidth={920} minHeight={520} headerActions={<DesktopIconButton size="xs" icon={<RefreshCw className="h-3.5 w-3.5"/>} tooltip="立即读取系统剪贴板" onClick={() => { void refreshHistory().then(notify.bind(null, '已刷新剪贴板历史')) }}/>}>
-      <div className="grid h-full min-h-0 grid-cols-[166px_minmax(0,1fr)_280px] overflow-hidden rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-inset)]">
+      <div data-context-zone="clipboard.panel" className="grid h-full min-h-0 grid-cols-[166px_minmax(0,1fr)_280px] overflow-hidden rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-inset)]">
         <aside className="flex min-h-0 flex-col border-r border-[var(--ds-border)] bg-[var(--ds-surface)] p-2 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">
           <div className="mb-2 px-2 py-2"><div className="flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-muted)] dark:text-[var(--ds-text-primary)]"><Clipboard className="h-4 w-4 text-[var(--ds-accent)]"/>剪贴板</div></div>
           <DesktopInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索内容" icon={<Search className="h-3.5 w-3.5"/>}/>
           <div className="mt-3 space-y-0.5">{navItems.map(([key, label, count, icon]) => <DesktopButton key={key} type="button" size="sm" variant="ghost" active={filter === key} onClick={() => setFilter(key)} className="w-full justify-start"><span className="flex w-full items-center gap-2 text-left">{icon}<span className="flex-1">{label}</span><span className="text-xs text-[var(--ds-text-muted)]">{count}</span></span></DesktopButton>)}</div>
           <div className="mt-3 border-t border-[var(--ds-border)] pt-2"><div className="px-2 pb-1 text-xs font-medium text-[var(--ds-text-muted)]">内容类型 · 自动识别</div>{typeItems.map(([key, label, count, icon]) => <DesktopButton key={key} type="button" size="sm" variant="ghost" active={filter === key} onClick={() => setFilter(key)} className="w-full justify-start"><span className="flex w-full items-center gap-2 text-left">{icon}<span className="flex-1">{label}</span><span className="text-xs text-[var(--ds-text-muted)]">{count}</span></span></DesktopButton>)}</div>
           <div className="mt-3 flex items-center border-t border-[var(--ds-border)] px-2 pb-1 pt-3 text-xs font-semibold text-[var(--ds-text-muted)] dark:border-[var(--ds-border)]">我的分组 <span className="ml-auto text-xs font-normal text-[var(--ds-text-subtle)]">{groups.length}</span></div>
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">{groups.map((group) => <div key={group.id} className="group flex items-center"><DesktopButton type="button" size="sm" variant="ghost" active={filter === `group:${group.id}`} onClick={() => setFilter(`group:${group.id}`)} className="min-w-0 flex-1 justify-start"><span className="flex w-full items-center gap-2 text-left"><Archive className="h-4 w-4 shrink-0"/><span className="truncate">{group.name}</span><span className="ml-auto text-xs text-[var(--ds-text-muted)]">{history.filter((item) => item.groupId === group.id).length}</span></span></DesktopButton><DesktopIconButton size="xs" icon={<Pencil className="h-3 w-3"/>} tooltip="重命名分组" onClick={() => void renameGroup(group)} className="hidden group-hover:inline-flex"/><DesktopIconButton size="xs" icon={<Trash2 className="h-3 w-3"/>} tooltip="删除分组" onClick={() => void deleteGroup(group)} className="hidden group-hover:inline-flex text-[var(--ds-status-danger)]"/></div>)}</div>
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">{groups.map((group) => <div key={group.id} data-clip-group={group.id} data-clip-group-name={group.name} className="group flex items-center"><DesktopButton type="button" size="sm" variant="ghost" active={filter === `group:${group.id}`} onClick={() => setFilter(`group:${group.id}`)} className="min-w-0 flex-1 justify-start"><span className="flex w-full items-center gap-2 text-left"><Archive className="h-4 w-4 shrink-0"/><span className="truncate">{group.name}</span><span className="ml-auto text-xs text-[var(--ds-text-muted)]">{history.filter((item) => item.groupId === group.id).length}</span></span></DesktopButton><DesktopIconButton size="xs" icon={<Pencil className="h-3 w-3"/>} tooltip="重命名分组" onClick={() => void renameGroup(group)} className="hidden group-hover:inline-flex"/><DesktopIconButton size="xs" icon={<Trash2 className="h-3 w-3"/>} tooltip="删除分组" onClick={() => void deleteGroup(group)} className="hidden group-hover:inline-flex text-[var(--ds-status-danger)]"/></div>)}</div>
           <form onSubmit={(event) => void createGroup(event)} className="mt-2 flex gap-1 border-t border-[var(--ds-border)] pt-2"><DesktopInput value={newGroup} onChange={(event) => setNewGroup(event.target.value)} maxLength={32} placeholder="创建分组" className="min-w-0 flex-1"/><DesktopIconButton type="submit" size="xs" icon={<Plus className="h-3.5 w-3.5"/>} tooltip="创建分组" disabled={!newGroup.trim()} active/></form>
           <div className="mt-2 border-t border-[var(--ds-border)] px-2 pt-2 text-xs text-[var(--ds-text-subtle)] dark:border-[var(--ds-border)]">{currentImage ? '正在捕获图片剪贴板' : current ? `剪贴板 · ${current.length} 字符` : '自动捕获文本与图片'}<div className="mt-1">Ctrl+Shift+V 唤醒工作台</div></div>
         </aside>

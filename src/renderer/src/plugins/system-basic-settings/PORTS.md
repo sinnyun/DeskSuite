@@ -16,3 +16,7 @@
 - Runtime and MCP administration pages decode `runtime.info` and `mcp.getAccess` with plugin-local schemas before updating React state; runtime tool/service lists and string fields are bounded.
 - Fixed panel size: 640×500 px; content scrolls internally.
 - UI strings are Chinese.
+
+## Context menus
+
+The settings panel root carries `data-context-zone="settings.panel"`. The storage page (order 10) offers open location and copy path on storage usage rows (`data-storage-path/-exists`); opening is disabled when the path does not exist.

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent, ReactElement } from 'react'
 import { ArrowLeft, ExternalLink, FolderOpen, Image, Plus, RefreshCw } from 'lucide-react'
-import { callValidated, useUiKit } from '../../workbench/sdk'
+import { callValidated, getService, useUiKit } from '../../workbench/sdk'
+import type { ContextMenuService } from '../../workbench/sdk'
 import { boardPreviewSchema } from './schemas'
 
 interface Board { id: string; projectId: string; index: number; title: string; info: { materialCategory: string; material: string; size: string; quantity: string } }
@@ -37,7 +38,29 @@ export function PageManager({ projectId, projectName, hasDocument, boards, busy,
     anchor.current = id
   }
   const selectedIds = boards.filter((board) => selected.includes(board.id)).map((board) => board.id)
-  return <section data-page-manager className="flex min-h-0 flex-1 flex-col p-4">
+  useEffect(() => {
+    const cm = getService<ContextMenuService>('contextMenu')
+    if (!cm) return
+    return cm.register('workcrate.pages', ({ target }) => {
+      const element = target instanceof Element ? target : null
+      const card = element?.closest<HTMLElement>('[data-page-id]')
+      if (card) {
+        const board = boards.find((item) => item.id === card.dataset.pageId)
+        if (!board) return null
+        return [
+          { id: 'edit', label: '编辑页面', disabled: busy, onSelect: () => onOpen(board) },
+          { id: 'select', label: '加入导出选择', checked: selectedIds.includes(board.id), disabled: busy, onSelect: () => choose(board.id) },
+          { id: 'exportSelected', label: '导出选中图片', disabled: busy || !selectedIds.length, onSelect: () => onExport({ format, scale, boardIds: selectedIds }) }
+        ]
+      }
+      return [
+        { id: 'create', label: '新增画板', disabled: !hasDocument || busy, onSelect: onCreate },
+        { id: 'quickCreate', label: '快速创建', disabled: !hasDocument || busy, onSelect: onQuickCreate },
+        { id: 'sync', label: '同步', disabled: !hasDocument || busy, onSelect: onSync }
+      ]
+    }, { order: 10 })
+  }, [boards, selectedIds, busy, hasDocument, format, scale, choose, onOpen, onExport, onCreate, onQuickCreate, onSync])
+  return <section data-page-manager data-context-zone="workcrate.pages" className="flex min-h-0 flex-1 flex-col p-4">
     <header className="mb-3 flex shrink-0 flex-wrap items-center gap-3"><DesktopButton variant="ghost" icon={<ArrowLeft className="h-4 w-4"/>} onClick={onBack}>返回</DesktopButton><div className="min-w-0 flex-1"><h2 data-ds-type="title" className="ds-type-title truncate">{projectName}</h2><p data-ds-type="meta" className="ds-type-meta">共 {boards.length} 页 · 已选 {selectedIds.length} 页</p></div><DesktopButton variant="ghost" icon={<FolderOpen className="h-4 w-4"/>} disabled={!hasDocument || busy} onClick={onFolder}>工程文件夹</DesktopButton><DesktopButton variant="ghost" icon={<RefreshCw className="h-4 w-4"/>} disabled={!hasDocument || busy} onClick={onSync}>同步</DesktopButton><DesktopButton disabled={!hasDocument || busy} onClick={onQuickCreate}>快速创建</DesktopButton><DesktopButton variant="primary" icon={<Plus className="h-4 w-4"/>} disabled={!hasDocument || busy} onClick={onCreate}>新增画板</DesktopButton></header>
     <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-2 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">
       <DesktopButton size="xs" variant={mode === 'single' ? 'primary' : 'ghost'} disabled={busy} onClick={() => { setMode('single'); setSelected((current) => current.slice(-1)) }}>单选</DesktopButton><DesktopButton size="xs" variant={mode === 'multiple' ? 'primary' : 'ghost'} disabled={busy} onClick={() => setMode('multiple')}>多选</DesktopButton><DesktopButton size="xs" disabled={busy || !boards.length} onClick={() => { setMode('multiple'); setSelected(boards.map((board) => board.id)) }}>全选</DesktopButton><DesktopButton size="xs" disabled={busy || !selectedIds.length} onClick={() => { setSelected([]); anchor.current = null }}>取消选择</DesktopButton>

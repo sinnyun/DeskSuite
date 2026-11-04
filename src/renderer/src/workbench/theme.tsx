@@ -13,7 +13,7 @@ interface ThemeState {
 }
 
 const STORAGE_KEY = 'desksuite.theme.mode'
-const themeStore = createStore<ThemeState>((set, get) => ({
+export const themeStore = createStore<ThemeState>((set, get) => ({
   mode: (() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY)

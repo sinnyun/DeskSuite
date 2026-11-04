@@ -16,3 +16,7 @@
 - 运行环境和 MCP 管理页在更新 React 状态前，分别用插件本地 schema 解码 `runtime.info` 与 `mcp.getAccess`；运行时工具/服务列表及字符串字段均设有长度和数量上限。
 - 浮面板固定为 640×500 px，内容在面板内滚动。
 - 界面文案使用中文。
+
+## 右键菜单
+
+设置面板根节点带 `data-context-zone="settings.panel"`。存储页（order 10）在占用行（`data-storage-path/-exists`）上提供打开所在位置与复制路径；路径不存在时禁用打开。

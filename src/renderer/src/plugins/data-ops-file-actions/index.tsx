@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import type { DragEvent, ReactElement } from 'react'
-import { call, definePlugin, errorText, getService, useUiKit, type SelectionService, type SelectionSnapshot } from '../../workbench/sdk'
+import { useCallback, useEffect, useState } from 'react'
+import type { ReactElement } from 'react'
+import { call, definePlugin, errorText, getService, useUiKit, type ContextMenuEntry, type ContextMenuService, type SelectionService, type SelectionSnapshot, type UiKit } from '../../workbench/sdk'
+import { getAppClipboard, joinPath, requestFileOperation, setAppClipboard, subscribeFileOperations } from './requests'
 
 export default definePlugin({
   id: 'data-ops-file-actions',
   name: '文件操作',
-  version: '1.0.0',
+  version: '1.1.0',
   description: '提供文件操作菜单、人工批准和任务进度',
   author: 'DeskSuite 内置',
   contributions: [
@@ -15,7 +16,8 @@ export default definePlugin({
       order: 20,
       component: FileActionsOverlay
     }
-  ]
+  ],
+  setup: setupFileActionMenus
 })
 
 export type FileOperation = 'copy' | 'move' | 'rename' | 'mkdir' | 'trash'
@@ -82,15 +84,115 @@ export type UndoResult =
   | { jobId: string; undoId: string }
   | { undoId: string; status: 'stale' | 'conflict'; message: string }
 
+function operationTitle(op: FileOperation): string {  return ({ copy: '复制文件', move: '移动文件', rename: '重命名', mkdir: '新建目录', trash: '移到回收站' })[op]
+}
+
+function undoTitle(op: UndoEntry['op']): string {
+  return ({ move: '移动', rename: '重命名', mkdir: '新建目录' })[op]
+}
+
+function messageOf(error: unknown): string {
+  return errorText(error, '文件操作失败')
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+}
+
+function resultTitle(status: FileOperationResult['status']): string {
+  return ({ completed: '完成', skipped: '跳过', conflict: '冲突', failed: '失败', stale: '已变化' })[status]
+}
+
+function promptApi(): UiKit['prompt'] | null {
+  return getService<UiKit>('ui')?.prompt ?? null
+}
+
+function currentSelection(): SelectionSnapshot | null {
+  return getService<SelectionService>('selection')?.getSnapshot() ?? null
+}
+
+function fileActionEntries(entryPath: string | null, dirPath: string | null): ContextMenuEntry[] {
+  const snapshot = currentSelection()
+  const selectedPaths = (snapshot?.selected ?? []).map((item) => item.path)
+  const effective = entryPath && selectedPaths.includes(entryPath) ? selectedPaths : entryPath ? [entryPath] : []
+
+  if (effective.length > 0) {
+    return [
+      {
+        id: 'file-ops',
+        label: '文件操作',
+        submenu: [
+          { id: 'clip-copy', label: '复制到应用内剪贴板', onSelect: () => setAppClipboard('copy', effective) },
+          { id: 'clip-cut', label: '剪切到应用内剪贴板', onSelect: () => setAppClipboard('cut', effective) },
+          { separator: true },
+          { id: 'op-copy', label: '复制文件…', onSelect: () => requestFileOperation({ op: 'copy' }) },
+          { id: 'op-move', label: '移动文件…', onSelect: () => requestFileOperation({ op: 'move' }) },
+          { id: 'op-rename', label: '重命名…', onSelect: () => requestFileOperation({ op: 'rename' }) },
+          { id: 'op-trash', label: '移到回收站…', danger: true, onSelect: () => requestFileOperation({ op: 'trash' }) }
+        ]
+      },
+      {
+        id: 'drag-out',
+        label: '拖到其他应用',
+        draggable: true,
+        onDragStart: (event) => {
+          event.preventDefault()
+          void call('fileOps', 'startDrag', effective).catch((cause) => logDragError(cause))
+        }
+      }
+    ]
+  }
+
+  const clip = getAppClipboard()
+  return [
+    {
+      id: 'paste',
+      label: clip ? `粘贴（${clip.sources.length} 项，${clip.kind === 'cut' ? '剪切' : '复制'}）` : '粘贴',
+      disabled: !clip ? '应用内剪贴板为空' : !dirPath ? '当前没有打开目录' : false,
+      onSelect: () => {
+        const pending = getAppClipboard()
+        if (!pending || !dirPath) return
+        requestFileOperation({ op: pending.kind === 'cut' ? 'move' : 'copy', sources: pending.sources, target: dirPath })
+      }
+    },
+    {
+      id: 'mkdir-here',
+      label: '新建文件夹…',
+      disabled: !dirPath ? '当前没有打开目录' : false,
+      onSelect: () => {
+        const dialog = promptApi()
+        if (!dialog || !dirPath) return
+        void dialog({ title: '新建文件夹', label: '文件夹名称', placeholder: '新文件夹', confirmText: '创建' })
+          .then((name) => {
+            const trimmed = name?.trim()
+            if (!trimmed) return
+            requestFileOperation({ op: 'mkdir', target: joinPath(dirPath, trimmed) })
+          })
+          .catch(() => {})
+      }
+    }
+  ]
+}
+
+function logDragError(cause: unknown): void {
+  console.warn('[file-actions] 拖拽失败', messageOf(cause))
+}
+
+function setupFileActionMenus(): (() => void) | undefined {
+  const contextMenu = getService<ContextMenuService>('contextMenu')
+  if (!contextMenu) return undefined
+  return contextMenu.register('explorer.workspace', (context) => {
+    const entryPath = context.target.closest('[data-entry-path]')?.getAttribute('data-entry-path') ?? null
+    const dirPath = currentSelection()?.path ?? null
+    return fileActionEntries(entryPath, dirPath)
+  }, { order: 20 })
+}
+
 export function FileActionsOverlay(): ReactElement {
   const { DesktopButton } = useUiKit()
-  const selectionService = getService<SelectionService>('selection')
-  const selection = useSyncExternalStore(
-    selectionService?.subscribe ?? NOOP_SUBSCRIBE,
-    selectionService?.getSnapshot ?? EMPTY_SELECTION
-  )
-  const selectedPaths = useMemo(() => selection.selected.map((item) => item.path), [selection])
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [plan, setPlan] = useState<FileOperationPlan | null>(null)
   const [commandPlanId, setCommandPlanId] = useState<string | null>(null)
   const [conflictPolicy, setConflictPolicy] = useState<ConflictPolicy>('skip')
@@ -125,59 +227,37 @@ export function FileActionsOverlay(): ReactElement {
       }
     })
     void loadUndoStack()
-    const handleContextMenu = (event: MouseEvent): void => {
-      if (!selectionService || !selectionService.getSnapshot().path) return
-      if (!(event.target instanceof Element) || !event.target.closest('[data-file-workspace]')) return
-      event.preventDefault()
-      setMenu({ x: event.clientX, y: event.clientY })
-    }
-    const dismiss = (): void => setMenu(null)
-    document.addEventListener('contextmenu', handleContextMenu, true)
-    window.addEventListener('click', dismiss)
-    window.addEventListener('keydown', dismissOnEscape)
-    return () => {
-      unsubscribe()
-      document.removeEventListener('contextmenu', handleContextMenu, true)
-      window.removeEventListener('click', dismiss)
-      window.removeEventListener('keydown', dismissOnEscape)
-    }
-  }, [selectionService])
+    return () => { unsubscribe() }
+  }, [])
 
-  async function loadPlan(planId: string): Promise<void> {
-    try {
-      const next = await call<FileOperationPlan | null>('fileOps', 'get', planId)
-      if (next) {
-        setPlan(next)
-        setConflictPolicy(next.conflictPolicy)
-        setMenu(null)
-      }
-    } catch (cause) {
-      setError(messageOf(cause))
-    }
-  }
-
-  async function loadUndoStack(): Promise<void> {
-    try {
-      const stack = await call<UndoEntry[]>('fileOps', 'getUndoStack')
-      setUndoStack(Array.isArray(stack) ? stack : [])
-    } catch {
-      // F1-1 may be temporarily unavailable while plugins are starting or stopping.
-    }
-  }
-
-  async function createPlan(op: FileOperation): Promise<void> {
-    setMenu(null)
-    const sources = selectedPaths
+  const startOperation = useCallback(async (op: FileOperation, override?: { sources?: string[]; target?: string }): Promise<void> => {
+    const snapshot = currentSelection()
+    const sources = override?.sources ?? (snapshot?.selected ?? []).map((item) => item.path)
     if (op !== 'mkdir' && !sources.length) return
     let target: string | undefined
     if (op === 'copy' || op === 'move' || op === 'rename') {
-      target = window.prompt(op === 'rename' ? '请输入新的完整路径' : '请输入目标目录完整路径')?.trim()
-      if (!target) return
+      if (override?.target) {
+        target = override.target
+      } else {
+        const answer = await promptApi()?.({
+          title: operationTitle(op),
+          label: op === 'rename' ? '请输入新的完整路径' : '请输入目标目录完整路径',
+          placeholder: op === 'rename' ? sources[0] : snapshot?.path ?? '',
+          confirmText: '生成计划'
+        })
+        target = answer?.trim() || undefined
+        if (!target) return
+      }
     } else if (op === 'mkdir') {
-      const parent = selection.path
-      if (!parent) return
-      target = window.prompt('请输入新目录的完整路径', parent)?.trim()
-      if (!target) return
+      const parent = snapshot?.path ?? null
+      if (override?.target) {
+        target = override.target
+      } else {
+        if (!parent) return
+        const answer = await promptApi()?.({ title: '新建目录', label: '请输入新目录完整路径', value: parent, confirmText: '生成计划' })
+        target = answer?.trim() || undefined
+        if (!target) return
+      }
     }
     try {
       const response = await call<{ requiresApproval?: boolean; planId?: string; plan?: FileOperationPlan }>(
@@ -194,6 +274,34 @@ export function FileActionsOverlay(): ReactElement {
       setError(null)
     } catch (cause) {
       setError(messageOf(cause))
+    }
+  }, [])
+
+  useEffect(() => {
+    const stop = subscribeFileOperations((request) => {
+      void startOperation(request.op, request)
+    })
+    return stop
+  }, [startOperation])
+
+  async function loadPlan(planId: string): Promise<void> {
+    try {
+      const next = await call<FileOperationPlan | null>('fileOps', 'get', planId)
+      if (next) {
+        setPlan(next)
+        setConflictPolicy(next.conflictPolicy)
+      }
+    } catch (cause) {
+      setError(messageOf(cause))
+    }
+  }
+
+  async function loadUndoStack(): Promise<void> {
+    try {
+      const stack = await call<UndoEntry[]>('fileOps', 'getUndoStack')
+      setUndoStack(Array.isArray(stack) ? stack : [])
+    } catch {
+      // F1-1 may be temporarily unavailable while plugins are starting or stopping.
     }
   }
 
@@ -256,16 +364,6 @@ export function FileActionsOverlay(): ReactElement {
     setCommandPlanId(null)
   }
 
-  async function startDrag(event: DragEvent<HTMLButtonElement>): Promise<void> {
-    event.preventDefault()
-    setMenu(null)
-    try {
-      await call('fileOps', 'startDrag', selectedPaths)
-    } catch (cause) {
-      setError(messageOf(cause))
-    }
-  }
-
   async function cancelJob(jobId: string): Promise<void> {
     try {
       await call('fileOps', 'cancel', jobId)
@@ -305,24 +403,6 @@ export function FileActionsOverlay(): ReactElement {
 
   return (
     <div className="fixed inset-0 z-[100] pointer-events-none">
-      {menu && (
-        <div
-          className="pointer-events-auto fixed z-[102] w-48 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-1 shadow-xl dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface)]"
-          style={{ left: menu.x, top: menu.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {(['copy', 'move', 'rename', 'mkdir', 'trash'] as FileOperation[]).map((op) => (
-            <DesktopButton key={op} variant="ghost" size="sm" className="block w-full justify-start text-left" onClick={() => void createPlan(op)}>
-              {operationTitle(op)}…
-            </DesktopButton>
-          ))}
-          <div className="my-1 border-t border-[var(--ds-border)] dark:border-[var(--ds-border)]" />
-          <DesktopButton draggable variant="ghost" size="sm" onDragStart={(event) => void startDrag(event)} className="block w-full cursor-grab justify-start text-left">
-            按住拖到其他应用
-          </DesktopButton>
-        </div>
-      )}
-
       {plan && (
         <div className="pointer-events-auto fixed inset-0 z-[103] flex items-center justify-center bg-black/35 p-4">
           <section className="flex max-h-[80vh] w-[520px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-surface)] shadow-2xl dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface)]">
@@ -409,34 +489,4 @@ export function FileActionsOverlay(): ReactElement {
       )}
     </div>
   )
-}
-
-function dismissOnEscape(event: KeyboardEvent): void {
-  if (event.key === 'Escape') window.dispatchEvent(new MouseEvent('click'))
-}
-
-const NOOP_SUBSCRIBE = (): (() => void) => () => {}
-const EMPTY_SELECTION = (): SelectionSnapshot => ({ path: null, entries: [], selected: [] })
-
-function operationTitle(op: FileOperation): string {
-  return ({ copy: '复制文件', move: '移动文件', rename: '重命名', mkdir: '新建目录', trash: '移到回收站' })[op]
-}
-
-function undoTitle(op: UndoEntry['op']): string {
-  return ({ move: '移动', rename: '重命名', mkdir: '新建目录' })[op]
-}
-
-function messageOf(error: unknown): string {
-  return errorText(error, '文件操作失败')
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`
-}
-
-function resultTitle(status: FileOperationResult['status']): string {
-  return ({ completed: '完成', skipped: '跳过', conflict: '冲突', failed: '失败', stale: '已变化' })[status]
 }

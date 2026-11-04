@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import type { ReactElement } from 'react'
 import { ChartNoAxesColumn, FolderSearch } from 'lucide-react'
-import { useLayoutShallow, useUiKit, type SelectionItem } from '../../../workbench/sdk'
+import { call, getService, log, errorText, useLayoutShallow, useUiKit, type ContextMenuService, type SelectionItem } from '../../../workbench/sdk'
 import { useSelectionSnapshot } from '../useSelectionSnapshot'
 import { KIND_COLOR, KIND_LABEL, formatBytes } from '../format'
 
@@ -54,6 +54,27 @@ export function AnalyticsPanel(): ReactElement | null {
 
   const maxCount = stats.kinds.reduce((max, item) => Math.max(max, item.count), 0)
 
+  useEffect(() => {
+    const contextMenu = getService<ContextMenuService>('contextMenu')
+    if (!contextMenu) return
+    return contextMenu.register('insights.analytics', () => {
+      const directory = snapshot.path
+      if (!directory) return null
+      return [
+        {
+          id: 'analytics-open',
+          label: '在系统中打开目录',
+          onSelect: () => { void call('filesystem', 'open', directory).catch((error) => log('error', 'Insights', '打开目录失败', errorText(error))) }
+        },
+        {
+          id: 'analytics-copy',
+          label: '复制目录路径',
+          onSelect: () => { void call('clipboard', 'writeText', directory).catch((error) => log('error', 'Insights', '复制目录路径失败', errorText(error))) }
+        }
+      ]
+    }, { order: 10 })
+  }, [snapshot.path])
+
   const describe = (item: SelectionItem): string =>
     item.isDirectory ? '文件夹' : formatBytes(item.size)
 
@@ -77,7 +98,7 @@ export function AnalyticsPanel(): ReactElement | null {
           <span>先在左侧打开一个目录，统计会实时更新</span>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div data-context-zone="insights.analytics" className="flex flex-col gap-3">
           <div className="text-xs text-[var(--ds-text-subtle)] break-all">{snapshot.path}</div>
 
           <div className="grid grid-cols-3 gap-2">

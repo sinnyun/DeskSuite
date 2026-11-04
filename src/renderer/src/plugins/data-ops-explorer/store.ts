@@ -656,6 +656,26 @@ export class ExplorerStore {
     this.recordSelection(null, 'replace', [], traceId)
   }
 
+  selectPaths = (paths: string[], additive = false): void => {
+    const unique = [...new Set(paths)]
+    if (unique.length === 0) {
+      this.clearSelection()
+      return
+    }
+    const focused = unique[unique.length - 1]
+    this.anchorPath = focused
+    if (additive) {
+      const current = this.state.selectedPaths
+      const next = [...current]
+      for (const path of unique) if (!next.includes(path)) next.push(path)
+      this.set({ selectedPaths: next, focusedPath: focused })
+      this.recordSelection(focused, 'toggle', next)
+      return
+    }
+    this.set({ selectedPaths: unique, focusedPath: focused })
+    this.recordSelection(focused, 'replace', unique)
+  }
+
   setSearch = (search: string): void => {
     this.set({ search })
     if (this.searchLogTimer) clearTimeout(this.searchLogTimer)
@@ -739,14 +759,13 @@ export class ExplorerStore {
     scrollAnchor: { ...this.state.scrollAnchor }
   })
 
-  setSort = (sortField: SortField): void => {
-    if (this.state.sortField === sortField) {
-      this.set({ sortOrder: this.state.sortOrder === 'asc' ? 'desc' : 'asc' })
-    } else {
-      this.set({ sortField, sortOrder: 'asc' })
-    }
-    log('event', 'Explorer', `调整文件排序：${this.state.sortField} ${this.state.sortOrder}`, {
-      sortField: this.state.sortField, sortOrder: this.state.sortOrder
+  setSort = (sortField: SortField, direction?: 'asc' | 'desc'): void => {
+    const nextOrder = direction
+      ?? (this.state.sortField === sortField ? (this.state.sortOrder === 'asc' ? 'desc' : 'asc') : 'asc')
+    if (this.state.sortField === sortField && this.state.sortOrder === nextOrder) return
+    this.set({ sortField, sortOrder: nextOrder })
+    log('event', 'Explorer', `调整文件排序：${sortField} ${nextOrder}`, {
+      sortField, sortOrder: nextOrder
     }, ['explorer', 'sort'], { category: 'action', traceId: `explorer-sort-${crypto.randomUUID()}`, phase: '排序条件', status: 'ok' })
   }
 
@@ -844,7 +863,8 @@ export const explorerStore = activeStoreProxy
 
 export const activeSelectionService = {
   getSnapshot: (): SelectionSnapshot => activeStore.getSnapshot(),
-  subscribe: subscribeActive
+  subscribe: subscribeActive,
+  selectPaths: (paths: string[], additive = false): void => activeStore.selectPaths(paths, additive)
 }
 
 export function useCurrentExplorerStore(): ExplorerStore {

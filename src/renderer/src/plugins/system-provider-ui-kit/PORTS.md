@@ -25,6 +25,7 @@
 - `DesktopSelect`: themed dropdown; options are `{ value, label }` with optional `icon` and `ariaLabel`.
 - `DesktopCardButton`: themed selectable card surface; plugins provide content, behavior, and layout without repeating its color, border, radius, hover, focus, or selected styles.
 - `ThemeFloatingPanel`: restores its position, size, and maximized state through `workbench/sdk` layout state; stable persistence keys default to the panel title.
+- `prompt(options): Promise<string | null>`: queued in-app text dialog (`DesktopPromptOptions`: `title`, `label?`, `value?`, `placeholder?`, `confirmText?`, `multiline?`, `validate?`); resolves with the trimmed value or `null` on cancel. Electron has no `window.prompt`, so plugins must use this instead. Rendered by the `DialogHost` the plugin mounts in `floating.panels`.
 
 ## Slots
 

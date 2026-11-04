@@ -3,7 +3,7 @@ import type { ReactElement } from 'react'
 import { Archive, GitBranch, History, RotateCcw, Save, ShieldCheck } from 'lucide-react'
 import { mutateVersion, VersionActionCancelled } from './version-actions'
 import { versionEntriesSchema, versionGraphSchema, versionJobDoneSchema, versionPreviewSchema, versionStateSchema, versionsChangedSchema } from './schemas'
-import { callValidated, errorText, getService, useUiKit, type SelectionSnapshot, type SelectionService } from '../../workbench/sdk'
+import { call, callValidated, errorText, getService, useUiKit, type ContextMenuService, type SelectionSnapshot, type SelectionService } from '../../workbench/sdk'
 
 interface VersionEntry {
   versionId: string
@@ -76,7 +76,7 @@ function statusCopy(state: VersionState | null): { label: string; tone: string; 
 }
 
 export function FileVersionsPanel(): ReactElement {
-  const { DesktopButton, DesktopIconButton, DesktopInput } = useUiKit()
+  const { DesktopButton, DesktopIconButton, DesktopInput, prompt } = useUiKit()
   const selectionService = getService<SelectionService>('selection')
   const selection = useSyncExternalStore(
     selectionService?.subscribe ?? emptySubscribe,
@@ -378,8 +378,8 @@ export function FileVersionsPanel(): ReactElement {
     finally { if (pathRef.current === requestedPath) setBusy(false) }
   }
 
-  const createBranch = (): void => {
-    const name = window.prompt('输入新分支名称')
+  const createBranch = async (): Promise<void> => {
+    const name = await prompt({ title: '新建分支', placeholder: '分支名称', confirmText: '创建' })
     if (name?.trim()) void branchAction('create', { name: name.trim() })
   }
 
@@ -394,11 +394,54 @@ export function FileVersionsPanel(): ReactElement {
     void branchAction('resolve', { strategy })
   }
 
+  useEffect(() => {
+    const contextMenu = getService<ContextMenuService>('contextMenu')
+    if (!contextMenu) return
+    return contextMenu.register('versions.panel', (context) => {
+      const versionEl = context.target.closest('[data-version-id]')
+      if (versionEl) {
+        const versionId = versionEl.getAttribute('data-version-id') ?? ''
+        const entry = entries.find((item) => item.versionId === versionId)
+        return [
+          {
+            id: 'ver-restore',
+            label: '恢复此版本…',
+            disabled: !entry ? '版本不存在' : entry.isCurrent ? '当前版本无法恢复' : busy || Boolean(pendingRestore) ? '有版本任务进行中' : false,
+            onSelect: () => { if (entry) void restore(entry) }
+          },
+          {
+            id: 'ver-copy-title',
+            label: '复制版本说明',
+            disabled: !entry?.title,
+            onSelect: () => { if (entry) void call('clipboard', 'writeText', entry.title).catch(() => {}) }
+          }
+        ]
+      }
+      const branchEl = context.target.closest('[data-branch-name]')
+      if (branchEl) {
+        const name = branchEl.getAttribute('data-branch-name') ?? ''
+        const branch = graph?.branches.find((item) => item.name === name)
+        if (!branch) return null
+        const locked = busy || Boolean(pendingRestore)
+        return [
+          { id: 'branch-switch', label: '切换到此分支', disabled: branch.isCurrent ? '已是当前分支' : branch.isArchived ? '分支已归档' : locked ? '有版本任务进行中' : false, onSelect: () => { void branchAction('switch', { name: branch.name, overwrite: false }) } },
+          { id: 'branch-merge', label: '合并到当前分支', disabled: branch.isCurrent ? '不能合并自身' : branch.isArchived ? '分支已归档' : locked ? '有版本任务进行中' : false, onSelect: () => mergeBranch(branch) },
+          { id: 'branch-archive', label: '归档分支', disabled: branch.isArchived ? '分支已归档' : locked ? '有版本任务进行中' : false, onSelect: () => { void branchAction('archive', { name: branch.name }) } }
+        ]
+      }
+      return [
+        { id: 'ver-refresh', label: '刷新版本状态', disabled: busy, onSelect: () => { void refresh() } },
+        { id: 'ver-sync', label: '同步版本信息', disabled: busy || !path, onSelect: () => { void reconcileMetadata() } },
+        { id: 'ver-new-branch', label: '新建分支…', disabled: busy || Boolean(pendingRestore) || !entries.length ? '先保存一个版本' : false, onSelect: () => { void createBranch() } }
+      ]
+    }, { order: 10 })
+  }, [path, entries, graph, busy, pendingRestore, restore, refresh, reconcileMetadata, branchAction, mergeBranch, createBranch])
+
   if (!current) return <div className="flex h-full min-h-0 flex-col items-center justify-center gap-2 p-4 text-center text-xs text-[var(--ds-text-subtle)]"><History className="h-6 w-6 text-[var(--ds-text-subtle)]" />选择一个文件查看版本历史</div>
 
   const canContinueRestore = Boolean(pendingRestore?.sourceAvailable && (pendingRestore.sameSourceBytes || pendingRestore.sourceIsTarget))
   const canAbandonRestore = Boolean(pendingRestore?.sourceAvailable && !pendingRestore.sameSourceBytes && !pendingRestore.sourceIsTarget)
-  return <div className="flex h-full min-h-0 flex-col gap-2.5 overflow-y-auto bg-[var(--ds-surface-subtle)] p-2.5 text-xs dark:bg-[var(--ds-surface)]">
+  return <div data-context-zone="versions.panel" className="flex h-full min-h-0 flex-col gap-2.5 overflow-y-auto bg-[var(--ds-surface-subtle)] p-2.5 text-xs dark:bg-[var(--ds-surface)]">
     <section className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-2.5 shadow-sm dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">
       <div className="flex items-start gap-2">
         <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${stateIconTone}`}><ShieldCheck className="h-4 w-4"/></div>
@@ -437,7 +480,7 @@ export function FileVersionsPanel(): ReactElement {
     <section className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-2.5 shadow-sm dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">
       <div className="mb-2 flex items-center gap-2"><History className="h-3.5 w-3.5 text-[var(--ds-accent)]"/><strong className="flex-1 text-[var(--ds-text-primary)] dark:text-[var(--ds-text-primary)]">版本时间线</strong><span className="rounded-full bg-[var(--ds-surface-muted)] px-1.5 py-0.5 text-xs text-[var(--ds-text-muted)] dark:bg-[var(--ds-surface-muted)] dark:text-[var(--ds-text-subtle)]">{entries.length} 个版本</span></div>
       {!entries.length ? <div className="rounded-md border border-dashed border-[var(--ds-border)] px-3 py-5 text-center text-xs text-[var(--ds-text-subtle)]">{busy ? '正在读取 Lore…' : '还没有保存版本'}</div> : <div className="relative space-y-1.5 pl-3.5 before:absolute before:bottom-3 before:left-[5px] before:top-3 before:w-px before:bg-[var(--ds-border)]">
-        {entries.map((entry) => <article key={entry.versionId} className="relative">
+        {entries.map((entry) => <article key={entry.versionId} data-version-id={entry.versionId} data-version-title={entry.title} className="relative">
           <span className={`absolute -left-[12px] top-3.5 z-10 h-2.5 w-2.5 rounded-full border-2 border-white ${entry.isCurrent ? 'bg-[var(--ds-status-success)] ring-2 ring-[var(--ds-status-success-soft)] dark:border-[var(--ds-surface-raised)]' : 'bg-[var(--ds-border-strong)] dark:border-[var(--ds-surface-raised)]'}`} aria-label={entry.isCurrent ? '当前版本' : '历史版本'}/>
           <div className={`rounded-md border p-2 ${entry.isCurrent ? 'border-[var(--ds-status-success)]/35 bg-[var(--ds-status-success-soft)] dark:border-[var(--ds-status-success)]/35 dark:bg-[var(--ds-status-success-soft)]' : 'border-[var(--ds-border)] bg-[var(--ds-surface)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]'}`}>
             <div className="flex items-start gap-2"><div className="flex h-9 w-11 shrink-0 items-center justify-center overflow-hidden rounded border border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">{previews[entry.versionId] ? <img src={previews[entry.versionId]} alt={`${entry.title} 预览`} className="h-full w-full object-cover"/> : <History className="h-4 w-4 text-[var(--ds-text-subtle)]"/>}</div>
@@ -450,9 +493,9 @@ export function FileVersionsPanel(): ReactElement {
     </section>
 
     <section className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-2.5 shadow-sm dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">
-      <div className="mb-2 flex items-center gap-2"><GitBranch className="h-3.5 w-3.5 text-[var(--ds-accent)]"/><strong className="flex-1 text-[var(--ds-text-primary)] dark:text-[var(--ds-text-primary)]">分支与版本图谱</strong><span className="text-xs text-[var(--ds-text-subtle)]">{graph?.branches.length ?? 0} 条分支</span><DesktopButton size="xs" variant="ghost" disabled={busy || Boolean(pendingRestore) || !entries.length} onClick={createBranch}>新建</DesktopButton></div>
+      <div className="mb-2 flex items-center gap-2"><GitBranch className="h-3.5 w-3.5 text-[var(--ds-accent)]"/><strong className="flex-1 text-[var(--ds-text-primary)] dark:text-[var(--ds-text-primary)]">分支与版本图谱</strong><span className="text-xs text-[var(--ds-text-subtle)]">{graph?.branches.length ?? 0} 条分支</span><DesktopButton size="xs" variant="ghost" disabled={busy || Boolean(pendingRestore) || !entries.length} onClick={() => void createBranch()}>新建</DesktopButton></div>
       {graph?.pendingMerge && <div className="mb-2 rounded-md border border-[var(--ds-status-warning)]/35 bg-[var(--ds-status-warning-soft)] p-2 text-[var(--ds-status-warning)]"><div className="font-semibold">待解决合并 · {graph.pendingMerge.conflictFiles.length} 个冲突</div><div className="mt-1.5 flex flex-wrap gap-1"><DesktopButton size="xs" variant="subtle" disabled={busy || Boolean(pendingRestore)} onClick={() => resolveMerge('ours')}>保留当前分支</DesktopButton><DesktopButton size="xs" variant="subtle" disabled={busy || Boolean(pendingRestore)} onClick={() => resolveMerge('theirs')}>采用来源分支</DesktopButton><DesktopButton size="xs" variant="ghost" disabled={busy || Boolean(pendingRestore)} onClick={() => void branchAction('abort', {})}>中止</DesktopButton></div></div>}
-      <div className="space-y-1.5">{visibleBranches.map((branch) => <article key={branch.branchId} className={`rounded-md border p-2 ${branch.isCurrent ? 'border-[var(--ds-accent)]/30 bg-[var(--ds-accent-soft)] dark:border-[var(--ds-accent-strong)]/40 dark:bg-[var(--ds-accent-soft)]' : branch.isArchived ? 'border-[var(--ds-border)] bg-[var(--ds-surface-subtle)]' : 'border-[var(--ds-status-info)]/20 bg-[var(--ds-status-info-soft)] dark:border-[var(--ds-status-info)]/30 dark:bg-[var(--ds-status-info-soft)]'}`}>
+      <div className="space-y-1.5">{visibleBranches.map((branch) => <article key={branch.branchId} data-branch-name={branch.name} className={`rounded-md border p-2 ${branch.isCurrent ? 'border-[var(--ds-accent)]/30 bg-[var(--ds-accent-soft)] dark:border-[var(--ds-accent-strong)]/40 dark:bg-[var(--ds-accent-soft)]' : branch.isArchived ? 'border-[var(--ds-border)] bg-[var(--ds-surface-subtle)]' : 'border-[var(--ds-status-info)]/20 bg-[var(--ds-status-info-soft)] dark:border-[var(--ds-status-info)]/30 dark:bg-[var(--ds-status-info-soft)]'}`}>
         <div className="flex min-w-0 items-center gap-1.5"><span title={branch.name} className={`max-w-[52%] truncate rounded-full border px-1.5 py-0.5 text-xs font-semibold ${branch.isCurrent ? 'border-[var(--ds-accent)]/30 bg-[var(--ds-accent-soft)] text-[var(--ds-accent)]' : branch.isArchived ? 'border-[var(--ds-border)] bg-[var(--ds-surface-muted)] text-[var(--ds-text-muted)]' : 'border-[var(--ds-status-info)]/30 bg-[var(--ds-status-info-soft)] text-[var(--ds-status-info)]'}`}><GitBranch className="mr-0.5 inline h-2.5 w-2.5"/>{branch.name}</span>{branch.isCurrent && <span className="shrink-0 rounded-full bg-[var(--ds-status-success-soft)] px-1.5 py-0.5 text-xs text-[var(--ds-status-success)]">当前</span>}{branch.isArchived && <span className="shrink-0 rounded-full bg-[var(--ds-surface-muted)] px-1.5 py-0.5 text-xs text-[var(--ds-text-muted)]">已归档</span>}
           <div className="ml-auto flex shrink-0 items-center gap-1">{!branch.isCurrent && !branch.isArchived && <><DesktopButton size="xs" variant="ghost" disabled={busy || Boolean(pendingRestore)} title="切换分支" onClick={() => void branchAction('switch', { name: branch.name, overwrite: false })}>切换</DesktopButton><DesktopButton size="xs" variant="ghost" disabled={busy || Boolean(pendingRestore)} title="合并到当前分支" onClick={() => mergeBranch(branch)}>合并</DesktopButton><DesktopIconButton size="xs" variant="danger" disabled={busy || Boolean(pendingRestore)} tooltip="归档分支" icon={<Archive className="h-3 w-3"/>} onClick={() => void branchAction('archive', { name: branch.name })}/></>}</div>
         </div>

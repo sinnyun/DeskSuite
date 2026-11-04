@@ -61,3 +61,7 @@ The toolbar offers selected images, all images, and all PDF pages. Images suppor
 ## Quick-create view
 
 `QuickCreate.tsx` is an internal component opened by the page manager's quick-create action after project creation. It supports Excel/WPS clipboard text, CSV, an editable cell table, adding/deleting rows, blank-row counts and a reuse-initial-board option. It calls `workcrateBoards.previewQuickCreate` and `quickCreate` only through the bridge. Success returns to the refreshed page matrix; failure preserves the editable draft and displays bounded error text with credentials and local paths scrubbed. The `workcrate:panel-open` payload may include `quickCreate: true` and a parsed `table` for MCP-driven draft inspection. The panel retains fixed dimensions with internal scrolling; all new copy is Chinese.
+
+## Context menus
+
+Three zones are registered through the `contextMenu` service (order 10). `workcrate.projects` on project cards (`data-workcrate-project/-name/-doc-path`): open page manager, open project folder, copy path, delete project (confirm); blank space refreshes the list. `workcrate.pages` in the page manager: page cards offer edit page, toggle in export selection (checked state) and export selected images (labelled with the selection count); the blank area offers new board / quick create / sync (disabled when no document is open or the panel is busy). `workcrate.thumbs` on panel thumbnails: edit page.

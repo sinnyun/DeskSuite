@@ -12,7 +12,7 @@ export function ExplorerBreadcrumbs(): ReactElement {
 
   if (state.tagFocus) {
     return (
-      <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden text-xs">
+      <div data-context-zone="explorer.breadcrumb" className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden text-xs">
         <Tags className="w-3.5 h-3.5 text-[var(--ds-accent)] dark:text-[var(--ds-accent-strong)] shrink-0" />
         <span className="shrink-0 text-[var(--ds-text-subtle)]">标签聚合</span>
         <ChevronRight className="w-3 h-3 text-[var(--ds-text-secondary)] dark:text-[var(--ds-text-secondary)] shrink-0" />
@@ -41,7 +41,7 @@ export function ExplorerBreadcrumbs(): ReactElement {
   }
 
   return (
-    <div className="flex items-center gap-0.5 min-w-0 flex-1 overflow-hidden text-xs">
+    <div data-context-zone="explorer.breadcrumb" className="flex items-center gap-0.5 min-w-0 flex-1 overflow-hidden text-xs">
       <HardDrive className="w-3.5 h-3.5 text-[var(--ds-text-subtle)] shrink-0 mr-1" />
       {segments.map((segment, index) => {
         const isLast = index === segments.length - 1
@@ -54,6 +54,7 @@ export function ExplorerBreadcrumbs(): ReactElement {
               size="xs"
               variant="ghost"
               active={isLast}
+              data-crumb-path={segment.path}
               onClick={() => explorerStore.navigate(segment.path)}
               className={`!h-auto !px-1.5 !py-0.5 rounded-md whitespace-nowrap gap-1 ${
                 isLast

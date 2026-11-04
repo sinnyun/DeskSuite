@@ -153,7 +153,10 @@ export function TopBar(): ReactElement {
   ]
 
   return (
-    <header className="h-11 w-full bg-[var(--ds-surface)] dark:bg-[var(--ds-surface-dark)] border-b border-[var(--ds-border)] dark:border-[var(--ds-border)] flex items-center justify-between px-3 gap-2 select-none z-30 shrink-0 shadow-xs app-drag">
+    <header
+      className="h-11 w-full bg-[var(--ds-surface)] dark:bg-[var(--ds-surface-dark)] border-b border-[var(--ds-border)] dark:border-[var(--ds-border)] flex items-center justify-between px-3 gap-2 select-none z-30 shrink-0 shadow-xs app-drag"
+      data-context-zone="shell.top"
+    >
       {activeMenu && (
         <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
       )}

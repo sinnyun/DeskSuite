@@ -132,6 +132,12 @@ function EntryDetail({ entry }: { entry: FsEntry }): ReactElement {
     setTagDraft('')
   }
 
+  useEffect(() => {
+    const onExport = (): void => { void exportMetadata() }
+    window.addEventListener('explorer:export-manifest', onExport)
+    return () => window.removeEventListener('explorer:export-manifest', onExport)
+  }, [exportMetadata])
+
   return (
     <>
       <div className="flex items-start gap-2.5 border-b border-[var(--ds-border)] pb-4 dark:border-[var(--ds-border)]">
@@ -259,7 +265,7 @@ export function Inspector(): ReactElement {
   const folders = state.entries.filter((item) => item.isDirectory).length
 
   return (
-    <div data-file-inspector className="flex flex-col gap-4 p-4 text-xs">
+    <div data-file-inspector data-context-zone="explorer.inspector" className="flex flex-col gap-4 p-4 text-xs">
       {selection.length > 1 && (
         <div className="rounded-xl border border-[var(--ds-accent)]/30 bg-[var(--ds-accent-soft)] dark:bg-[var(--ds-accent-soft)] px-2.5 py-2">
           <div className="flex items-center justify-between">

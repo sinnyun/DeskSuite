@@ -30,3 +30,4 @@ The one-time legacy history import is bounded in the main process to 500 strings
 - Up to 50 entries, SHA-256 deduplication, automatic text/link/code/image classification, seven day expiry for temporary entries, favorites, and persistent user groups.
 - Clipboard capture runs every 1.5 seconds only while the panel is open.
 - MCP `read_clipboard` may return PNG image content; `write_clipboard` remains text-only.
+- Contributes the `clipboard.panel` context menu (order 10): history rows (`data-clip-id`) offer write back, copy text (text records only), edit draft, favorite toggle and delete; group rows (`data-clip-group`) offer rename and delete group (records return to ungrouped, with confirm); blank space offers create group and clear temporary records. Name input uses `ui.prompt`.

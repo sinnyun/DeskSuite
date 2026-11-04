@@ -17,6 +17,7 @@ import {
   ThemeWorkspacePanel
 } from './panels'
 import { ActivityButton } from './activity'
+import { openPrompt } from './dialogs'
 
 export const uiKit: UiKit = {
   DesktopButton,
@@ -32,5 +33,6 @@ export const uiKit: UiKit = {
   ThemeSidebarPanel,
   ThemeWorkspacePanel,
   ThemeCollapsibleSection,
-  ThemeFloatingPanel
+  ThemeFloatingPanel,
+  prompt: openPrompt
 }

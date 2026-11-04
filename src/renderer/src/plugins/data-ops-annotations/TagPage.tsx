@@ -7,6 +7,8 @@ import {
   errorText,
   getService,
   useUiKit,
+  type ContextMenuEntry,
+  type ContextMenuService,
   type SelectionService,
   type SelectionSnapshot
 } from '../../workbench/sdk'
@@ -22,7 +24,7 @@ interface PanesViewService {
 }
 
 export function TagPage(): ReactElement {
-  const { DesktopButton, DesktopInput, DesktopSelect, DesktopTagPill, DesktopCard } = useUiKit()
+  const { DesktopButton, DesktopInput, DesktopSelect, DesktopTagPill, DesktopCard, prompt } = useUiKit()
   const selectionService = getService<SelectionService>('selection')
   const selection = useSyncExternalStore(
     selectionService?.subscribe ?? NOOP_SUBSCRIBE,
@@ -87,6 +89,59 @@ export function TagPage(): ReactElement {
     void refreshEntries(selectedPaths)
   }, [selectedKey])
 
+  useEffect(() => {
+    const contextMenu = getService<ContextMenuService>('contextMenu')
+    if (!contextMenu) return
+    return contextMenu.register('annotations.tags', (context) => {
+      const el = context.target.closest('[data-tag-id]')
+      const tag = el ? findTag(tree, Number(el.getAttribute('data-tag-id'))) : undefined
+      if (!tag) {
+        return [
+          {
+            id: 'tag-new-root',
+            label: '新建根标签…',
+            onSelect: () => {
+              void prompt({ title: '新建根标签', placeholder: '标签名称', confirmText: '创建' })
+                .then((answer) => {
+                  const name = answer?.trim()
+                  if (!name) return
+                  return call('annotations', 'create', { name }).then(refreshTree)
+                })
+                .catch((cause) => setError(messageOf(cause)))
+            }
+          },
+          { id: 'tag-refresh', label: '刷新标签树', onSelect: () => { void refreshTree() } }
+        ]
+      }
+      const assigned = selectedPaths.length > 0 && selectedPaths.every((path) => entries[path]?.tags.some((entry) => entry.id === tag.id))
+      const siblings = siblingTags(tree, tag)
+      const items: ContextMenuEntry[] = [
+        { id: 'tag-view', label: '查看标签聚合', onSelect: () => selectTag(tag) }
+      ]
+      if (selectedPaths.length > 0) {
+        items.push({ id: 'tag-assign', label: assigned ? '从所选移除' : '应用到所选', disabled: busy, onSelect: () => { void assign(tag, !assigned) } })
+      }
+      items.push(
+        { id: 'tag-add-child', label: '添加子标签…', onSelect: () => { void createChild(tag) } },
+        { id: 'tag-rename', label: '重命名…', onSelect: () => { void rename(tag) } }
+      )
+      if (siblings.length > 0) {
+        items.push({
+          id: 'tag-merge',
+          label: '合并到…',
+          submenu: siblings.map((sibling) => ({
+            id: `tag-merge-${sibling.id}`,
+            label: sibling.name,
+            onSelect: () => { void mergeTo(tag, sibling.id) }
+          }))
+        })
+      }
+      items.push({ id: 'tag-remove', label: '删除标签', danger: true, onSelect: () => { void remove(tag) } })
+      return items
+    }, { order: 10 })
+    // 处理器闭包引用本渲染的状态函数，依赖覆盖其读取的全部状态。
+  }, [tree, selectedKey, entries, activeTagId, busy, prompt])
+
   const inclusiveCounts = useMemo(() => buildInclusiveCounts(tree, counts), [tree, counts])
   const tagRows = flatten(tree)
 
@@ -145,7 +200,8 @@ export function TagPage(): ReactElement {
   }
 
   async function rename(tag: TagItem): Promise<void> {
-    const name = window.prompt('请输入新的标签名称', tag.name)?.trim()
+    const answer = await prompt({ title: '重命名标签', value: tag.name, confirmText: '保存' })
+    const name = answer?.trim()
     if (!name || name === tag.name) return
     try {
       await call('annotations', 'rename', { tagId: tag.id, name })
@@ -156,20 +212,41 @@ export function TagPage(): ReactElement {
     }
   }
 
+  async function mergeTo(tag: TagItem, targetId: number): Promise<void> {
+    try {
+      await call('annotations', 'merge', { sourceId: tag.id, targetId })
+      await refreshTree()
+      await refreshEntries()
+    } catch (cause) {
+      setError(messageOf(cause))
+    }
+  }
+
   async function merge(tag: TagItem): Promise<void> {
     const candidates = flatten(tree).filter((item) => item.id !== tag.id)
     if (candidates.length === 0) return
-    const answer = window.prompt(`输入合并目标标签编号：\n${candidates.map((item) => `${item.id}：${item.name}`).join('\n')}`)
+    const answer = await prompt({
+      title: `合并标签「${tag.name}」`,
+      label: `输入合并目标标签编号：\n${candidates.map((item) => `${item.id}：${item.name}`).join('\n')}`,
+      multiline: true,
+      confirmText: '合并'
+    })
     if (!answer) return
     const targetId = Number(answer)
     if (!candidates.some((item) => item.id === targetId)) {
       setError('目标标签编号无效')
       return
     }
+    await mergeTo(tag, targetId)
+  }
+
+  async function createChild(parent: TagItem): Promise<void> {
+    const answer = await prompt({ title: `在「${parent.name}」下新建子标签`, placeholder: '标签名称', confirmText: '创建' })
+    const name = answer?.trim()
+    if (!name) return
     try {
-      await call('annotations', 'merge', { sourceId: tag.id, targetId })
+      await call('annotations', 'create', { name, parentId: parent.id })
       await refreshTree()
-      await refreshEntries()
     } catch (cause) {
       setError(messageOf(cause))
     }
@@ -190,7 +267,7 @@ export function TagPage(): ReactElement {
   const cachedMeta = selectedPaths.length === 1 ? annotationSnapshot[selectedPaths[0]] : undefined
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 text-xs">
+    <div data-context-zone="annotations.tags" className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 text-xs">
       <DesktopCard className="p-3">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="flex items-center gap-1.5 font-semibold">
@@ -220,10 +297,7 @@ export function TagPage(): ReactElement {
                 onToggleCollapse={toggleCollapse}
                 onSelect={selectTag}
                 onAssign={assign}
-                onCreateChild={(parent) => {
-                  const childName = window.prompt(`在“${parent.name}”下新建子标签`)
-                  if (childName?.trim()) void call('annotations', 'create', { name: childName.trim(), parentId: parent.id }).then(refreshTree).catch((cause) => setError(messageOf(cause)))
-                }}
+                onCreateChild={(parent) => { void createChild(parent) }}
                 onRename={rename}
                 onMerge={merge}
                 onRemove={remove}
@@ -313,7 +387,7 @@ function TagRow({
           className={!hasChildren ? 'opacity-0' : ''}
           icon={isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         />
-        <DesktopButton size="xs" variant="ghost" active={isActive} onClick={() => onSelect(tag)} title={tag.path} className="min-w-0 flex-1 justify-start gap-1.5 px-1.5 text-left">
+        <DesktopButton size="xs" variant="ghost" active={isActive} data-tag-id={tag.id} data-tag-name={tag.name} onClick={() => onSelect(tag)} title={tag.path} className="min-w-0 flex-1 justify-start gap-1.5 px-1.5 text-left">
           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${isActive ? 'bg-[var(--ds-accent)] dark:bg-[var(--ds-accent-strong)]' : 'bg-[var(--ds-border-strong)]'}`} />
           <span className={`min-w-0 flex-1 truncate ${isActive ? 'font-semibold' : ''}`}>{tag.name}</span>
           {count > 0 && (
@@ -366,6 +440,20 @@ function findTag(nodes: TagItem[], id: number): TagItem | undefined {
     if (nested) return nested
   }
   return undefined
+}
+
+function siblingTags(nodes: TagItem[], tag: TagItem): TagItem[] {
+  const walk = (list: TagItem[], parent: TagItem | null): TagItem[] | null => {
+    for (const node of list) {
+      if (node.id === tag.id) {
+        return (parent ? parent.children : list).filter((item) => item.id !== tag.id)
+      }
+      const found = walk(node.children, node)
+      if (found) return found
+    }
+    return null
+  }
+  return walk(nodes, null) ?? []
 }
 
 function buildInclusiveCounts(nodes: TagItem[], counts: Record<string, number>): Map<number, number> {

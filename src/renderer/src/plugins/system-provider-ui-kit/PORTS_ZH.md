@@ -25,6 +25,7 @@
 - `DesktopSelect`：主题化下拉选择，选项为 `{ value, label }`，可选 `icon` 与 `ariaLabel`。
 - `DesktopCardButton`：主题化可选卡片按钮；插件只提供内容、交互与网格布局，不重复书写卡片颜色、边框、圆角或选中样式。
 - `ThemeFloatingPanel`：通过 `workbench/sdk` 布局状态恢复位置、尺寸和最大化状态；持久化键默认使用面板标题。
+- `prompt(options): Promise<string | null>`：应用内文本输入对话框（排队显示，`DesktopPromptOptions`：`title`、`label?`、`value?`、`placeholder?`、`confirmText?`、`multiline?`、`validate?`）；确认返回去空白的输入值，取消返回 `null`。Electron 无 `window.prompt`，需要输入时一律用它。对话框由本插件挂载的 `DialogHost` 渲染。
 
 ## 槽位
 

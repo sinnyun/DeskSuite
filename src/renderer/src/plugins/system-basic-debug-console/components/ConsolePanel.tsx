@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { ChevronDown, ChevronRight, FilterX } from 'lucide-react'
-import { useLayoutShallow, useLogs, useUiKit, type LogCategory, type LogEntry, type LogLevel } from '../../../workbench/sdk'
+import { call, getService, logStore, useLayoutShallow, useLogs, useUiKit, type ContextMenuService, type LogCategory, type LogEntry, type LogLevel } from '../../../workbench/sdk'
 import {
   LOG_CATEGORIES,
   LOG_LEVELS,
@@ -11,7 +11,7 @@ import {
   useConsoleView
 } from '../view'
 import { formatMessage, levelLabel, phaseLabel, sourceLabel } from '../labels'
-import { ConsoleToolbar } from './ConsoleToolbar'
+import { ConsoleToolbar, serialize } from './ConsoleToolbar'
 
 const LEVEL_STYLE: Record<LogLevel, string> = {
   info: 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent)]',
@@ -50,7 +50,7 @@ function LogRow({ entry }: { entry: LogEntry }): ReactElement {
   const compact = payload.replace(/\s+/g, ' ')
 
   return (
-    <div className="flex items-start gap-2 px-3 py-1.5 border-b border-[var(--ds-border)] hover:bg-[var(--ds-hover-overlay)]">
+    <div data-debug-entry={entry.id} data-debug-category={entry.category ?? 'system'} data-debug-trace={entry.traceId ?? ''} className="flex items-start gap-2 px-3 py-1.5 border-b border-[var(--ds-border)] hover:bg-[var(--ds-hover-overlay)]">
       <span className="text-[var(--ds-text-subtle)] tabular-nums shrink-0 select-text">{entry.timestamp}</span>
       <span className={`shrink-0 px-1.5 rounded text-[10px] font-semibold leading-4 mt-0.5 ${LEVEL_STYLE[entry.level]}`}>
         {levelLabel(entry.level)}
@@ -85,7 +85,7 @@ function TraceGroup({ group }: { group: LogGroup }): ReactElement {
   if (!group.traceId) return <LogRow entry={latest} />
 
   return (
-    <div className="border-b border-[var(--ds-border)]">
+    <div data-debug-entry={group.id} data-debug-category={latest.category ?? 'system'} data-debug-trace={group.traceId ?? ''} className="border-b border-[var(--ds-border)]">
       <div className="flex items-center gap-2 px-2 py-1.5 bg-[var(--ds-surface-subtle)]/70 hover:bg-[var(--ds-hover-overlay)]">
         <DesktopIconButton size="xs" onClick={() => consoleViewStore.toggleExpanded(group.id)} title={expanded ? '折叠调用链' : '展开调用链'} icon={expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />} />
         <span title={latest.message} className="text-[var(--ds-text-primary)] truncate flex-1">{summary}</span>
@@ -120,6 +120,34 @@ export function ConsolePanel(): ReactElement {
   const filtering = view.search.trim().length > 0 || view.source !== '*' || view.levels.length !== LOG_LEVELS.length || view.categories.length !== LOG_CATEGORIES.length
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'debug-console'
 
+  useEffect(() => {
+    const cm = getService<ContextMenuService>('contextMenu')
+    if (!cm) return
+    return cm.register('debug.rows', ({ target }) => {
+      const row = target instanceof Element ? target.closest<HTMLElement>('[data-debug-entry]') : null
+      if (row) {
+        const id = row.dataset.debugEntry ?? ''
+        const category = (row.dataset.debugCategory ?? 'system') as LogCategory
+        const group = groups.find((item) => item.id === id)
+        const entries = group ? group.entries : filtered.filter((entry) => entry.id === id)
+        if (!entries.length) return null
+        const expanded = view.expanded.includes(id)
+        const canToggle = Boolean(group?.traceId) || entries.some((entry) => logPayloadText(entry))
+        return [
+          { id: 'copy', label: '复制内容', onSelect: () => { void call('clipboard', 'writeText', serialize(entries)).catch(() => {}) } },
+          { id: 'toggle', label: expanded ? '收起' : '展开', disabled: !canToggle, onSelect: () => consoleViewStore.toggleExpanded(id) },
+          { id: 'onlyCategory', label: `仅看「${CATEGORY_LABEL[category]}」`, checked: view.categories.length === 1 && view.categories[0] === category, onSelect: () => consoleViewStore.applyCommand({ categories: [category] }) }
+        ]
+      }
+      return [
+        { id: 'copyAll', label: `复制全部（${filtered.length}）`, disabled: !filtered.length, onSelect: () => { void call('clipboard', 'writeText', serialize(filtered)).catch(() => {}) } },
+        { id: 'export', label: '导出 JSON…', disabled: !filtered.length, onSelect: () => { void call('filesystem', 'saveText', 'desksuite-日志.json', JSON.stringify([...filtered].reverse(), null, 2), 'json').catch(() => {}) } },
+        { separator: true, id: 'sep-clear' },
+        { id: 'clear', label: '清空日志', danger: true, disabled: !logs.length, onSelect: () => { if (window.confirm('清空全部调试日志？')) { logStore.clear(); consoleViewStore.reset() } } }
+      ]
+    }, { order: 10 })
+  }, [groups, filtered, view, logs.length])
+
   return (
     <ThemeFloatingPanel title="程序调试信息" persistenceKey="debug-console" icon={<span className="font-mono text-sm">&gt;_</span>} badge={`${groups.length} 组`} isOpen={isOpen} onClose={closeFloatingPanel} initialX={64} initialY={62} initialWidth={1320} initialHeight={820} minWidth={900} minHeight={560} headerActions={<ConsoleToolbar />}>
       <div className="flex h-full min-h-0 flex-col overflow-hidden font-mono text-xs leading-relaxed">
@@ -138,7 +166,7 @@ export function ConsolePanel(): ReactElement {
             <span className="text-[var(--ds-text-subtle)] tabular-nums shrink-0">{groups.length} 组 / {filtered.length} 条</span>
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-[var(--ds-border)]">
+        <div data-context-zone="debug.rows" className="flex-1 min-h-0 overflow-auto rounded-lg border border-[var(--ds-border)]">
           {logs.length === 0 ? <div className="flex h-full items-center justify-center p-6 text-[var(--ds-text-subtle)]">暂无调试信息。调用应用服务或执行 MCP 工具后，操作与数据流会显示在这里。</div>
             : filtered.length === 0 ? <div className="flex h-full items-center justify-center p-6 text-[var(--ds-text-subtle)]">没有符合筛选条件的记录</div>
               : <>

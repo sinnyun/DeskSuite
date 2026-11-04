@@ -25,21 +25,26 @@ export function BottomDock(): ReactElement | null {
       style={{ height: `${bottomHeight}px` }}
       className="w-full bg-[var(--ds-surface)] dark:bg-[var(--ds-surface-dark)] border-t border-[var(--ds-border)] dark:border-[var(--ds-border)] flex flex-col select-none shrink-0 overflow-hidden z-20 shadow-lg"
     >
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--ds-border)] dark:border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:bg-[var(--ds-surface-raised)] shrink-0">
+      <div
+        className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--ds-border)] dark:border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:bg-[var(--ds-surface-raised)] shrink-0"
+        data-context-zone="shell.tabs"
+        data-sidebar-region="bottom"
+      >
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {tabs.length > 0 ? (
             tabs.map((tab) => {
               const Label = tab.label
               return (
-                <DesktopTab
-                  key={tab.id}
-                  active={activeBottomTab === tab.id}
-                  icon={Label ? undefined : tab.icon}
-                  badge={Label ? undefined : tab.badge}
-                  label={Label ? <Label active={activeBottomTab === tab.id} /> : tab.title ?? tab.id}
-                  onClick={() => openBottomTab(tab.id)}
-                  className="shrink-0"
-                />
+                <div key={tab.id} className="contents" data-tab-id={tab.id}>
+                  <DesktopTab
+                    active={activeBottomTab === tab.id}
+                    icon={Label ? undefined : tab.icon}
+                    badge={Label ? undefined : tab.badge}
+                    label={Label ? <Label active={activeBottomTab === tab.id} /> : tab.title ?? tab.id}
+                    onClick={() => openBottomTab(tab.id)}
+                    className="shrink-0"
+                  />
+                </div>
               )
             })
           ) : (

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { FolderOpen, RefreshCw } from 'lucide-react'
-import { call, callValidated, errorText, useUiKit } from '../../workbench/sdk'
+import { call, callValidated, errorText, getService, useUiKit } from '../../workbench/sdk'
+import type { ContextMenuService } from '../../workbench/sdk'
 import { storageSnapshotSchema } from './storage-schema'
 import type { z } from 'zod'
 
@@ -48,7 +49,22 @@ export function StorageSettings(): ReactElement {
 
   useEffect(() => { void refresh() }, [])
 
-  return <div className="space-y-3">
+  useEffect(() => {
+    const cm = getService<ContextMenuService>('contextMenu')
+    if (!cm) return
+    return cm.register('settings.panel', ({ target }) => {
+      const row = target instanceof Element ? target.closest<HTMLElement>('[data-storage-path]') : null
+      const path = row?.dataset.storagePath ?? ''
+      if (!row || !path) return null
+      const exists = row.dataset.storageExists === '1'
+      return [
+        { id: 'open', label: '打开所在位置', disabled: !exists, onSelect: () => { void open(path) } },
+        { id: 'copyPath', label: '复制路径', onSelect: () => { void call('clipboard', 'writeText', path).catch(() => {}) } }
+      ]
+    }, { order: 10 })
+  }, [])
+
+  return <div data-context-zone="settings.panel" className="space-y-3">
     <div className="flex items-center justify-between gap-3">
       <p className="text-xs text-[var(--ds-text-muted)]">插件数据保存在本机用户数据目录，占用大小按当前磁盘内容实时统计。</p>
       <DesktopIconButton size="xs" icon={<RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />} tooltip="重新统计" onClick={() => void refresh()} />
@@ -75,7 +91,7 @@ export function StorageSettings(): ReactElement {
         <span className="ml-auto text-xs font-medium tabular-nums text-[var(--ds-text-secondary)] dark:text-[var(--ds-text-primary)]">{formatBytes(group.size)}</span>
       </div>
       <div className="divide-y divide-[var(--ds-border)]">
-        {group.entries.map((entry) => <div key={entry.path} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+        {group.entries.map((entry) => <div key={entry.path} data-storage-path={entry.path} data-storage-exists={entry.exists ? '1' : '0'} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs font-medium text-[var(--ds-text-primary)] dark:text-[var(--ds-text-primary)]">{entry.label}</span>

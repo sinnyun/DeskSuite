@@ -34,3 +34,7 @@ Left/right sidebar and bottom dock splitter handles reveal a collapse button on 
 ## Events
 
 None. All UI state is owned by the host `useLayout` store.
+
+## Context menus
+
+`setup()` registers three zones through the `contextMenu` service: `shell.top` (command palette / settings / launcher, sidebar and dock collapse toggles, zen mode, theme toggle, reset layout, reload renderer), `shell.activity` (open or hide the right-clicked activity entry via `data-activity-label`, collapse the left sidebar, open the command palette) and `shell.tabs` (switch to the right-clicked tab via `data-tab-id`/`data-sidebar-region`, collapse or expand that sidebar or the bottom dock, reset layout). All actions drive the host `layoutStore`/`themeStore` stores.

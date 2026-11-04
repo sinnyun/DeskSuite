@@ -54,3 +54,7 @@
 ## 日志
 
 来源 `Insights`（生命周期、剪贴板操作、暂存篮变更）。错误载荷使用共享限长错误文本 helper，遮蔽凭据和本机路径。
+
+## 右键菜单
+
+AnalysisPanel 注册 `insights.analytics`（order 10）：在系统中打开被统计目录并复制其路径（未分析目录时不产出）。BasketPanel 注册 `insights.basket`（order 10）：暂存卡片（`data-basket-path`）提供定位 / 打开 / 复制路径 / 移出暂存；空白处提供复制全部路径与清空暂存篮（带确认）。暂存篮为空时不产出清空项。

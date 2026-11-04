@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentType, DragEvent, ReactNode } from 'react'
 
 export type SlotId =
   | 'app.root'
@@ -92,6 +92,62 @@ export interface SelectionSnapshot {
 export interface SelectionService {
   getSnapshot(): SelectionSnapshot
   subscribe(listener: () => void): () => void
+  // 可选：支持程序化选中（右键菜单选中修正等）；未实现时调用方需降级
+  selectPaths?: (paths: string[], additive?: boolean) => void
+}
+
+// ---------------------------------------------------------------------------
+// 右键菜单（实现见 system-provider-context-menu）
+// ---------------------------------------------------------------------------
+
+export interface ContextMenuItem {
+  id: string
+  label: string
+  icon?: ReactNode
+  shortcut?: string
+  danger?: boolean
+  // string = 禁用并给出原因（tooltip）
+  disabled?: boolean | string
+  checked?: boolean
+  submenu?: ContextMenuEntry[] | (() => ContextMenuEntry[])
+  onSelect?: () => void
+  // 拖到外部应用的菜单项（如“拖到其他应用”）：按下即开始原生拖拽，不走 onSelect
+  draggable?: boolean
+  onDragStart?: (event: DragEvent) => void
+}
+
+export type ContextMenuEntry = ContextMenuItem | { separator: true; id?: string }
+
+export function isContextMenuSeparator(entry: ContextMenuEntry): entry is { separator: true; id?: string } {
+  return (entry as { separator?: boolean }).separator === true
+}
+
+export interface ContextMenuContext {
+  zoneId: string
+  target: Element
+  clientX: number
+  clientY: number
+}
+
+export type ContextMenuZoneHandler = (context: ContextMenuContext) => ContextMenuEntry[] | null
+
+export interface ContextMenuService {
+  register(zoneId: string, handler: ContextMenuZoneHandler, options?: { order?: number }): () => void
+  open(zoneId: string, x: number, y: number, context?: Partial<ContextMenuContext>): boolean
+}
+
+// ---------------------------------------------------------------------------
+// 对话框原语（实现见 system-provider-ui-kit）
+// ---------------------------------------------------------------------------
+
+export interface DesktopPromptOptions {
+  title: string
+  label?: string
+  value?: string
+  placeholder?: string
+  confirmText?: string
+  multiline?: boolean
+  validate?: (value: string) => string | null
 }
 
 export interface BasketItem extends SelectionItem {

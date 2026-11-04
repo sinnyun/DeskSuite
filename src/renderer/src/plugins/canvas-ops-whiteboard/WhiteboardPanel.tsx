@@ -58,8 +58,10 @@ import {
   ZoomOut
 } from 'lucide-react'
 import { call, getService, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import type { ContextMenuEntry, ContextMenuService } from '../../workbench/sdk'
 import { getCanvas } from './contract'
 import type { BoardNode, CanvasService } from './contract'
+import { BoardEngine } from './engine'
 import { BoardViewport } from './viewport'
 import './whiteboard.css'
 
@@ -76,7 +78,7 @@ export function WhiteboardPanel(): ReactElement | null {
 
 function Panel({ board }: { board: CanvasService }): ReactElement | null {
   const state = useSyncExternalStore(board.subscribe, board.getSnapshot)
-  const { ThemeFloatingPanel, DesktopButton, DesktopInput, DesktopSelect } = useUiKit()
+  const { ThemeFloatingPanel, DesktopButton, DesktopInput, DesktopSelect, prompt } = useUiKit()
   const { floatingPanelOpen, activeFloatingPanel, openFloatingPanel, closeFloatingPanel } = useLayoutShallow((state) => ({ floatingPanelOpen: state.floatingPanelOpen, activeFloatingPanel: state.activeFloatingPanel, openFloatingPanel: state.openFloatingPanel, closeFloatingPanel: state.closeFloatingPanel }))
   const isOpen = floatingPanelOpen && activeFloatingPanel === 'whiteboard'
   const [search, setSearch] = useState('')
@@ -199,6 +201,208 @@ function Panel({ board }: { board: CanvasService }): ReactElement | null {
     },
     [board]
   )
+  useEffect(() => {
+    const cm = getService<ContextMenuService>('contextMenu')
+    if (!cm) return
+    return cm.register('canvas.board', ({ target, clientX, clientY }) => {
+      const snapshot = board.getSnapshot()
+      const scene = snapshot.scene
+      if (!snapshot.id) return null
+      const domHit =
+        target instanceof Element
+          ? target.closest<HTMLElement>('[data-canvas-content]')?.dataset.canvasContent
+          : undefined
+      const hit = domHit ? { kind: 'node' as const, id: domHit } : BoardEngine.active?.hitAtClient(clientX, clientY)
+      let ids: string[] = []
+      if (hit?.kind === 'group') {
+        const groups = new Map((scene.groups ?? []).map((g) => [g.id, g]))
+        for (const node of scene.nodes) {
+          let gid: string | undefined = node.group
+          while (gid) {
+            if (gid === hit.id) {
+              ids.push(node.id)
+              break
+            }
+            gid = groups.get(gid)?.parent
+          }
+        }
+      } else if (hit) ids = [hit.id]
+      if (!ids.length) ids = snapshot.selection
+      const act = (command: string, args: Record<string, unknown> = {}): (() => void) => () => {
+        board.select(ids, false)
+        execute(command, args)
+      }
+      if (ids.length) {
+        const nodes = scene.nodes.filter((n) => ids.includes(n.id))
+        const allLocked = nodes.length > 0 && nodes.every((n) => n.locked)
+        const single = ids.length === 1 ? nodes[0] : undefined
+        const hasGroup = nodes.some((n) => n.group)
+        const hasFrame = nodes.some((n) => n.frame)
+        const isEagle = typeof single?.resource === 'string' && single.resource.startsWith('eagle:')
+        const menu: ContextMenuEntry[] = []
+        if (single && (single.type === 'text' || single.type === 'note') && !allLocked)
+          menu.push({
+            id: 'edit-text',
+            label: '编辑文本',
+            onSelect: () => {
+              board.select(ids, false)
+              if (single.html) execute('richText')
+              else execute('textEdit', { action: 'open', id: single.id })
+            }
+          })
+        if (single?.type === 'image' && !allLocked) menu.push({ id: 'crop', label: '裁剪', onSelect: act('cropOpen') })
+        if (menu.length) menu.push({ id: 'sep-top', separator: true })
+        menu.push(
+          { id: 'copy', label: '复制', shortcut: 'Ctrl+C', onSelect: act('copy') },
+          { id: 'paste', label: '粘贴', shortcut: 'Ctrl+V', onSelect: () => execute('paste') },
+          { id: 'duplicate', label: '创建副本', onSelect: act('duplicate') },
+          { id: 'delete', label: '删除', danger: true, shortcut: 'Del', onSelect: () => {
+            if (!window.confirm(`删除选中的 ${ids.length} 个元素？`)) return
+            board.select(ids, false)
+            execute('delete')
+          } },
+          { id: 'lock', label: allLocked ? '解锁' : '锁定', checked: allLocked, onSelect: act('lock', { value: !allLocked }) },
+          {
+            id: 'order',
+            label: '层级',
+            submenu: [
+              { id: 'order-top', label: '置于顶层', onSelect: act('order', { direction: 'top' }) },
+              { id: 'order-bottom', label: '置于底层', onSelect: act('order', { direction: 'bottom' }) }
+            ]
+          },
+          {
+            id: 'grouping',
+            label: '组合',
+            submenu: [
+              { id: 'group-new', label: '创建组合', disabled: ids.length < 2 ? '需要选中至少 2 个元素' : false, onSelect: act('group') },
+              { id: 'group-remove', label: '取消组合', disabled: hasGroup ? false : '所选元素不在组合内', onSelect: act('ungroup') }
+            ]
+          },
+          {
+            id: 'framing',
+            label: '分区',
+            submenu: [
+              { id: 'frame-new', label: '用分区包住所选元素', onSelect: act('frameSelection') },
+              { id: 'frame-remove', label: '从所在分区移出', disabled: hasFrame ? false : '所选元素不在分区内', onSelect: act('detachFrame') }
+            ]
+          },
+          {
+            id: 'transform',
+            label: '变换',
+            submenu: [
+              { id: 'rotate', label: '旋转 90°', onSelect: act('rotate', { angle: 90 }) },
+              { id: 'rotate-neg', label: '旋转 -90°', onSelect: act('rotate', { angle: -90 }) },
+              { id: 'flip-x', label: '水平镜像', onSelect: act('flip', { axis: 'x' }) },
+              { id: 'flip-y', label: '垂直镜像', onSelect: act('flip', { axis: 'y' }) }
+            ]
+          },
+          {
+            id: 'arrange',
+            label: '排列',
+            submenu: [
+              { id: 'arrange-grid', label: '网格排列', disabled: ids.length < 2 ? '需要选中至少 2 个元素' : false, onSelect: act('arrange', { mode: 'grid' }) },
+              { id: 'arrange-h', label: '横向排列', disabled: ids.length < 2 ? '需要选中至少 2 个元素' : false, onSelect: act('arrange', { mode: 'horizontal' }) },
+              { id: 'arrange-v', label: '纵向排列', disabled: ids.length < 2 ? '需要选中至少 2 个元素' : false, onSelect: act('arrange', { mode: 'vertical' }) },
+              { id: 'dist-x', label: '等距分布（横向）', disabled: ids.length < 3 ? '需要至少 3 个元素' : false, onSelect: act('distribute', { axis: 'x' }) },
+              { id: 'dist-y', label: '等距分布（纵向）', disabled: ids.length < 3 ? '需要至少 3 个元素' : false, onSelect: act('distribute', { axis: 'y' }) }
+            ]
+          }
+        )
+        if (single && isEagle)
+          menu.push(
+            { id: 'sep-eagle', separator: true },
+            { id: 'eagle-open', label: '在 Eagle 中定位', onSelect: () => { board.select(ids, false); execute('eagleOpen', { id: single.id }) } },
+            { id: 'eagle-refresh', label: '刷新 Eagle 信息', onSelect: () => { board.select(ids, false); execute('eagleInspect', { id: single.id, refresh: true }) } }
+          )
+        return menu
+      }
+      const point = BoardEngine.active?.clientToBoard(clientX, clientY) ?? { x: 140, y: 100 }
+      const addShape = (type: string): ContextMenuEntry => ({
+        id: `add-${type}`,
+        label: ({ rect: '矩形', ellipse: '椭圆', line: '直线', arrow: '箭头', text: '文本', note: '便签', frame: '分区' } as Record<string, string>)[type] ?? type,
+        onSelect: () => execute('add', { type, x: point.x, y: point.y })
+      })
+      return [
+        { id: 'paste', label: '粘贴', shortcut: 'Ctrl+V', onSelect: () => execute('paste') },
+        {
+          id: 'add',
+          label: '添加元素',
+          submenu: ['rect', 'ellipse', 'line', 'arrow', 'text', 'note', 'frame'].map(addShape)
+        },
+        { id: 'import', label: '导入文件…', onSelect: () => execute('import') },
+        { id: 'paste-image', label: '粘贴剪贴板图片', onSelect: () => execute('pasteImage') },
+        {
+          id: 'select-all',
+          label: '全选',
+          shortcut: 'Ctrl+A',
+          disabled: scene.nodes.some((n) => !n.locked) ? false : '画板是空的',
+          onSelect: () => execute('select', { ids: scene.nodes.filter((n) => !n.locked).map((n) => n.id) })
+        },
+        { id: 'fit', label: '缩放适应内容', shortcut: 'Shift+1', onSelect: () => execute('fit') },
+        {
+          id: 'bookmark',
+          label: '保存视图书签…',
+          onSelect: () => {
+            void prompt({ title: '保存视图书签', label: '书签名称', value: '视图书签', confirmText: '保存' }).then((name) => {
+              if (!name) return
+              execute('bookmark', { name })
+            })
+          }
+        },
+        {
+          id: 'background',
+          label: '背景',
+          submenu: (['dots', 'grid', 'none'] as const).map((bg) => ({
+            id: `bg-${bg}`,
+            label: bg === 'dots' ? '点阵' : bg === 'grid' ? '网格' : '无',
+            checked: scene.background === bg,
+            onSelect: () => execute('settings', { background: bg })
+          }))
+        },
+        { id: 'snap', label: '吸附对齐', checked: scene.snap, onSelect: () => execute('settings', { snap: !scene.snap }) },
+        { id: 'rulers', label: '显示标尺', checked: scene.rulers, onSelect: () => execute('settings', { rulers: !scene.rulers }) },
+        {
+          id: 'export',
+          label: '导出画板',
+          submenu: [
+            { id: 'export-png', label: '导出为 PNG', onSelect: () => execute('export', { format: 'png' }) },
+            { id: 'export-jpeg', label: '导出为 JPEG', onSelect: () => execute('export', { format: 'jpeg' }) }
+          ]
+        },
+        {
+          id: 'search',
+          label: '搜索节点…',
+          onSelect: () => {
+            void prompt({ title: '搜索节点', label: '按名称 / 文本 / 标签搜索', placeholder: '输入关键词', confirmText: '搜索' }).then((query) => {
+              if (!query) return
+              void board
+                .command('search', { query })
+                .then((rows) => {
+                  const found = Array.isArray(rows) ? rows.map((row) => String((row as { id?: unknown }).id)) : []
+                  if (!found.length) {
+                    board.report(`没有找到「${query}」相关的元素`)
+                    return
+                  }
+                  board.select(found)
+                  execute('fit', { selection: true })
+                })
+                .catch((e) => board.report(e))
+            })
+          }
+        },
+        { id: 'sep-del', separator: true },
+        {
+          id: 'remove-board',
+          label: '删除画板…',
+          danger: true,
+          onSelect: () => {
+            if (!window.confirm(`删除画板「${scene.title}」？`)) return
+            void board.remove().catch((e) => board.report(e))
+          }
+        }
+      ]
+    }, { order: 10 })
+  }, [board, execute, prompt])
   if (!isOpen) return null
 
   const selection = state.scene.nodes.filter((n) => state.selection.includes(n.id))

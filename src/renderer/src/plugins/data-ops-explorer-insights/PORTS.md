@@ -55,3 +55,7 @@ None. Basket data is owned by the main process.
 ## Logs
 
 Source `Insights` (lifecycle, clipboard actions, basket changes). Error payloads use the shared bounded error-text helper to scrub credentials and local paths.
+
+## Context menus
+
+AnalyticsPanel registers `insights.analytics` (order 10): open the analysed directory in the system file manager and copy its path (nothing is produced when no directory is analysed). BasketPanel registers `insights.basket` (order 10): item cards (`data-basket-path`) offer reveal / open / copy path / remove from basket; blank space offers copy all paths and clear basket (with confirm). The clear entry is omitted while the basket is empty.

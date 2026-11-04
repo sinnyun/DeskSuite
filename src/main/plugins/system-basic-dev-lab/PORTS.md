@@ -20,6 +20,7 @@ Service: `devLab`.
 - `dev_inject_data({ count, profile? })` starts a mutating low-impact job and returns its job ID.
 - `dev_clear_data({ profile? })` starts a mutating low-impact job and removes only this plugin's virtual rows.
 - `dev_status({ profile? })` is read-only.
+- `dev_open_context_menu({ zoneId, x?, y?, selector? })` broadcasts `dev:context-menu` so the renderer opens the given `data-context-zone` menu without a real right click (verification only; falls back to the built-in menu when the zone has no contribution). `selector` resolves a specific element (e.g. `[data-entry-path]`) as the menu target to simulate right-clicking a card; without it the zone element is used.
 
 ## Events and settings
 

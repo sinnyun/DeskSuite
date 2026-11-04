@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Search, FolderOpen, X } from 'lucide-react'
-import { call, definePlugin, errorText, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import { call, definePlugin, errorText, getService, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import type { BasketService, ContextMenuEntry, ContextMenuService } from '../../workbench/sdk'
 import { searchResultSchema, type SearchResult } from './search-schema'
+
+interface FavoriteService {
+  get(path: string | null | undefined): { favorite: boolean }
+  toggleFavorite(path: string): boolean
+}
 
 export default definePlugin({
   id: 'data-ops-search-ui',
@@ -55,19 +61,40 @@ function SearchPanel(): ReactElement | null {
     return () => { alive = false; window.clearTimeout(timer) }
   }, [isOpen, query, offset])
 
+  useEffect(() => {
+    const cm = getService<ContextMenuService>('contextMenu')
+    if (!cm) return
+    return cm.register('search.results', ({ target }) => {
+      const row = target instanceof Element ? target.closest<HTMLElement>('[data-search-path]') : null
+      const path = row?.dataset.searchPath ?? ''
+      if (!row || !path) return null
+      const name = row.dataset.searchName || path.split(/[\\/]/).pop() || path
+      const basket = getService<BasketService>('basket')
+      const annotations = getService<FavoriteService>('annotations')
+      const favorite = annotations?.get(path).favorite ?? false
+      return [
+        { id: 'reveal', label: '在文件管理器中定位', onSelect: () => { void call('filesystem', 'reveal', path).catch(() => {}) } },
+        { id: 'open', label: '打开', onSelect: () => { void call('filesystem', 'open', path).catch(() => {}) } },
+        { id: 'copyPath', label: '复制路径', onSelect: () => { void call('clipboard', 'writeText', path).catch(() => {}) } },
+        ...(basket ? [{ id: 'basket', label: '加入暂存篮', onSelect: () => basket.add([{ path, name, isDirectory: row.dataset.searchDir === '1', kind: row.dataset.searchKind || 'file', size: Number(row.dataset.searchSize) || 0, modifiedAt: Number(row.dataset.searchMtime) || 0 }]) } satisfies ContextMenuEntry] : []),
+        ...(annotations ? [{ id: 'favorite', label: '收藏', checked: favorite, onSelect: () => { annotations.toggleFavorite(path) } } satisfies ContextMenuEntry] : [])
+      ]
+    }, { order: 10 })
+  }, [])
+
   return (
     <ThemeFloatingPanel title="全局搜索" icon={<Search className="h-3.5 w-3.5" />} badge={result ? `${result.total} 条` : undefined}
       isOpen={isOpen} onClose={closeFloatingPanel} initialX={220} initialY={100} initialWidth={680} initialHeight={520} minWidth={520} minHeight={360}>
       <div className="flex h-full min-h-0 flex-col gap-3">
         <DesktopInput icon={<Search className="h-3.5 w-3.5" />} placeholder="搜索已扫描的名称或路径…" value={query}
           clearable onClear={() => { setQuery(''); setOffset(0) }} onChange={(event) => { setQuery(event.target.value); setOffset(0) }} />
-        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-[var(--ds-border)] dark:border-[var(--ds-border)]">
+        <div data-context-zone="search.results" className="min-h-0 flex-1 overflow-auto rounded-lg border border-[var(--ds-border)] dark:border-[var(--ds-border)]">
           {!query.trim() ? <p className="p-4 text-xs text-[var(--ds-text-muted)]">输入关键词搜索已扫描的文件。未扫描的目录仍可直接浏览。</p>
             : error ? <p role="alert" className="p-4 text-xs text-[var(--ds-status-danger)]">{error}</p>
               : !result || loading ? <p className="p-4 text-xs text-[var(--ds-text-muted)]">正在搜索…</p>
                 : result.items.length === 0 ? <p className="p-4 text-xs text-[var(--ds-text-muted)]">没有找到结果。请确认目标目录已建立索引。</p>
                   : <ul className="divide-y divide-[var(--ds-border)] dark:divide-[var(--ds-border)]">
-                    {result.items.map((item) => <li key={item.path} className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--ds-surface-subtle)] dark:hover:bg-[var(--ds-surface-muted)]">
+                    {result.items.map((item) => <li key={item.path} data-search-path={item.path} data-search-name={item.name} data-search-dir={item.kind === 'folder' ? '1' : '0'} data-search-kind={item.kind} data-search-size={item.size} data-search-mtime={item.mtime_ms} className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--ds-surface-subtle)] dark:hover:bg-[var(--ds-surface-muted)]">
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-xs font-medium">{item.name}</div>
                         <div className="truncate font-mono text-xs text-[var(--ds-text-muted)]" title={item.path}>{item.path}</div>

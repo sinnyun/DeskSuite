@@ -22,7 +22,7 @@ export function StatusInfo(): ReactElement {
   const virtualActive = state.viewMode === 'list' && visible > 30
 
   return (
-    <div data-ds-type="meta" className="ds-type-meta flex items-center gap-2 min-w-0">
+    <div data-ds-type="meta" data-context-zone="explorer.status" className="ds-type-meta flex items-center gap-2 min-w-0">
       <span className="flex items-center gap-1 min-w-0">
         <HardDrive className="w-3 h-3 shrink-0" />
         <span

@@ -101,6 +101,9 @@ function Row({
     <div
       role="row"
       aria-selected={selected}
+      data-entry-path={entry.path}
+      data-entry-name={entry.name}
+      data-entry-dir={entry.isDirectory ? '1' : '0'}
       onClick={(event) => explorerStore.select(entry.path, selectionModeFromEvent(event))}
       onDoubleClick={() => void explorerStore.openEntry(entry)}
       draggable={!entry.isDirectory}

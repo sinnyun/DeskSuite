@@ -15,3 +15,7 @@
 - 数据：`forPaths`、`tree`、`counts`、标签创建和旧数据导入结果在进入缓存或页面状态前经渲染插件本地 Zod schema 解码；`annotations:changed` payload 校验后才触发刷新；写入仍先乐观更新再调用 IPC。
 - 配置 / localStorage：无。
 - 标签页支持中文的标签创建、重命名、合并、删除和批量分配。
+
+## 右键菜单
+
+标签页注册 `annotations.tags`（order 10）：空白处提供新建根标签与刷新；标签行（`data-tag-id`）提供查看聚合、应用到所选/从所选移除（当前有选择时）、添加子标签、重命名、合并到…（同级标签子菜单）与删除。名称输入一律使用 `ui.prompt`。

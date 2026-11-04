@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { FolderOpen, Link2, RefreshCw, Trash2 } from 'lucide-react'
 import { call, errorText, getService, useLayoutShallow, useUiKit } from '../../workbench/sdk'
+import type { ContextMenuService } from '../../workbench/sdk'
 
 // Public service contract is structural: no imports from the providing plugin.
 interface ResourceInfo {
@@ -69,6 +70,30 @@ export function ResourcePanel(): ReactElement | null {
   useEffect(() => {
     if (!isOpen) media.current?.pause()
   }, [isOpen])
+
+  useEffect(() => {
+    const cm = getService<ContextMenuService>('contextMenu')
+    if (!cm) return
+    return cm.register('resources.panel', ({ target }) => {
+      const card = target instanceof Element ? target.closest<HTMLElement>('[data-resource-entry]') : null
+      const path = card?.dataset.resourcePath ?? ''
+      const uri = card?.dataset.resourceUri ?? ''
+      if (!card || !path || !uri) return null
+      const forget = (): void => {
+        if (!client) return
+        if (!window.confirm(`取消登记「${card.dataset.resourceName || path}」？原文件不会被删除。`)) return
+        run(client.forget(uri).then(() => { current.current = null; setSelected(null); return refresh() }))
+      }
+      return [
+        { id: 'preview', label: '预览', onSelect: () => run(preview(uri)) },
+        { id: 'reveal', label: '在系统中显示', disabled: card.dataset.resourceAvailable !== '1', onSelect: () => { void call('filesystem', 'reveal', path).catch(() => {}) } },
+        { id: 'copyPath', label: '复制路径', onSelect: () => { void call('clipboard', 'writeText', path).catch(() => {}) } },
+        { id: 'copyUri', label: '复制资源链接', onSelect: () => { void call('clipboard', 'writeText', uri).catch(() => {}) } },
+        { separator: true, id: 'sep-forget' },
+        { id: 'forget', label: '取消登记', danger: true, disabled: !client, onSelect: forget }
+      ]
+    }, { order: 10 })
+  }, [client, preview, refresh])
 
   useEffect(() => window.bridge.onEvent((channel, payload) => {
     if (channel === 'resources:changed') { void refresh().catch((cause) => setError(errorText(cause, '资源列表刷新失败'))); return }
@@ -143,7 +168,7 @@ export function ResourcePanel(): ReactElement | null {
 
   if (!isOpen) return null
   return <ThemeFloatingPanel title="统一资源" badge={`${items.length} 项`} icon={<Link2 className="h-3.5 w-3.5" />} isOpen onClose={closeFloatingPanel} initialX={110} initialY={70} initialWidth={920} initialHeight={620} minWidth={720} minHeight={520}>
-    <div className="flex h-full min-h-0 flex-col gap-3" data-resource-panel>
+    <div className="flex h-full min-h-0 flex-col gap-3" data-resource-panel data-context-zone="resources.panel">
       <div className="flex shrink-0 gap-2">
         <DesktopInput aria-label="本地资源路径" value={path} onChange={(event) => setPath(event.target.value)} placeholder="本地文件的绝对路径" className="min-w-0 flex-1" />
         <DesktopButton size="sm" disabled={!client || !path.trim()} onClick={() => client && run(client.register(path.trim()).then((resource) => preview(resource.uri)))}>登记链接</DesktopButton>
@@ -155,7 +180,7 @@ export function ResourcePanel(): ReactElement | null {
       <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] gap-3">
         <div className="min-h-0 overflow-auto rounded-[var(--ds-radius-panel)] border border-[var(--ds-border)] bg-[var(--ds-surface)] p-1">
           {!items.length && <p className="p-4 text-xs text-[var(--ds-text-muted)]">登记文件后，画布和其他插件可以使用同一链接。</p>}
-          {items.map((resource) => <DesktopCardButton key={resource.id} data-resource-entry={resource.id} selected={selected?.id === resource.id} onClick={() => run(preview(resource.uri))} className="mb-1 !w-full !rounded-[var(--ds-radius-control)] px-3 py-2.5 last:mb-0">
+          {items.map((resource) => <DesktopCardButton key={resource.id} data-resource-entry={resource.id} data-resource-path={resource.path} data-resource-uri={resource.uri} data-resource-name={resource.name} data-resource-available={resource.available ? '1' : '0'} selected={selected?.id === resource.id} onClick={() => run(preview(resource.uri))} className="mb-1 !w-full !rounded-[var(--ds-radius-control)] px-3 py-2.5 last:mb-0">
             <span className="block truncate text-xs font-medium" title={resource.name}>{resource.name}</span>
             <span className="mt-1 block text-xs text-[var(--ds-text-muted)]">{resource.kind} · {resource.available ? formatSize(resource.size) : '原文件不可用'}</span>
           </DesktopCardButton>)}

@@ -110,3 +110,7 @@ File drag / 文件拖动：list/grid/gallery 的文件项、画廊大图预览�
 画廊不再写入旧的 desksuite.explorer.thumbnails 渲染层缓存；共享 FileCard 通过现有主进程缩略图服务请求缩略图。
 
 卡片与画廊回退：没有缩略图时，FileCard 改为显示操作系统文件图标（`fileIcons.get`），不再显示通用类型图标；画廊不支持预览的查看区同样使用系统图标。目录保留原有的主题化文件夹图标。图标查询失败会缓存空结果并回退到类型图标。
+
+## 右键菜单
+
+内部模块 `menus.ts` 经 `contextMenu` 服务注册五个区域（order 10）：`explorer.workspace`（文件条目：打开 / 在系统中打开 / 定位 / 复制路径 / 复制文件名 / 收藏 / 评分 / 标签（含新建）/ 加入暂存篮；空白：刷新 / 全选 / 清除筛选 / 视图 / 排序）、`explorer.breadcrumb`（面包屑：跳转 / 复制路径 / 定位 / 返回上一级；空白：复制当前路径 / 刷新；标签聚合时可退出）、`explorer.inspector`（复用条目操作并追加导出目录清单）、`explorer.status`（清除选择 / 清除筛选 / 刷新 / 复制当前路径）、`explorer.tree`（收藏项：打开 / 编辑 / 移除 / 复制路径 / 定位；分组：收藏选中文件夹 / 重命名 / 删除 / 展开折叠；驱动盘：打开 / 复制路径 / 显示网络驱动盘；快捷入口；空白：刷新 / 新建分组）。可选服务（如暂存篮）缺失时隐藏对应条目。`data-ops-file-actions` 以 order 20 追加自己的 `explorer.workspace` 贡献（分隔线下合并）。文件行带 `data-entry-path`；树行带 `data-bookmark-item/-group/-path`、`data-tree-path`、`data-drive-path`；面包屑带 `data-crumb-path`。工作区命名输入使用 `ui.prompt`，不再使用 `window.prompt`。

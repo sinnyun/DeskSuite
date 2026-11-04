@@ -30,3 +30,7 @@
 - 静态导出等待图片加载，2 倍分辨率并限制最大面积/边长；包含富文本和视频当前帧，排除控件、网格、标尺、小地图。后续 DOM 阅读器需自己提供画布表示。
 - 消费 whiteboard:action，调用 whiteboard.complete 回执；new/removeBoard 在面板处理，其余分发 canvas。验收使用 whiteboard_panel MCP，不操作 DOM 事件。
 - 旧 Excalidraw 数据独立保留、不转换。PDF/Markdown/TXT 当前为文件卡片，阅读器按已选“以后”阶段接入 canvas.registerContent(kind,Component)。资源仅载入/重新打开时检查版本，不自动监听。
+
+## 右键菜单
+
+视口根节点带 `data-context-zone="canvas.board"`。WhiteboardPanel 注册该区域（order 10），全部动作经 canvas 服务 command API 执行（先以 `expandGroups=false` 选中命中节点，避免误选同组成员）。命中顺序：DOM 覆盖内容（`data-canvas-content`）→ `BoardEngine.hitAtClient` 同步 Leafer 选择器命中（组合命中映射为成员节点 id）→ 当前选择。节点菜单：编辑文本（text/note，含 HTML 走富文本）、裁剪（单张未锁定图片）、复制 / 粘贴 / 创建副本 / 删除（确认）/ 锁定切换（打勾），以及层级、组合、分区、变换、排列/等距分布子菜单（按条件禁用并说明原因）；Eagle 图片额外提供在 Eagle 中定位与刷新 Eagle 信息。空白菜单：粘贴、添加元素子菜单（7 种图形插入到右键点）、导入文件、粘贴剪贴板图片、全选、缩放适应、保存视图书签（`ui.prompt`）、背景 / 吸附 / 标尺切换（打勾）、导出、搜索节点（`ui.prompt` + `search` 命令）、删除画板（危险，确认）。

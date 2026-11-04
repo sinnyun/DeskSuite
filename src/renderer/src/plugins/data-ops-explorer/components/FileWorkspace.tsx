@@ -196,6 +196,7 @@ function PaneFrame({
       data-file-workspace
       data-current-path={state.path ?? ''}
       data-pane-id={paneId}
+      data-context-zone="explorer.workspace"
       onPointerDownCapture={activate}
       className={`flex min-w-0 min-h-0 flex-col overflow-hidden bg-[var(--ds-surface)] dark:bg-[var(--ds-surface)] ${active && index > 0 ? 'ring-1 ring-inset ring-[var(--ds-accent)]/30' : ''}`}
     >

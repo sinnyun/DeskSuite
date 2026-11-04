@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Archive, File, Folder, Image, MapPin, Music2, Package, Trash2, Video, X } from 'lucide-react'
-import { call, errorText, log, useLayoutShallow, useUiKit } from '../../../workbench/sdk'
+import { call, errorText, getService, log, useLayoutShallow, useUiKit, type ContextMenuEntry, type ContextMenuService } from '../../../workbench/sdk'
 import { basketStore, useBasket } from '../basket'
 import { KIND_LABEL, formatBytes } from '../format'
 
@@ -46,10 +46,43 @@ export function BasketPanel(): ReactElement | null {
     catch (error) { log('error', 'Insights', '复制暂存路径失败', errorText(error, '复制暂存路径失败')) }
   }
 
+  useEffect(() => {
+    const contextMenu = getService<ContextMenuService>('contextMenu')
+    if (!contextMenu) return
+    return contextMenu.register('insights.basket', (context) => {
+      const hit = context.target.closest('[data-basket-path]')?.getAttribute('data-basket-path') ?? null
+      if (hit) {
+        return [
+          { id: 'basket-reveal', label: '定位文件', onSelect: () => { void call('filesystem', 'reveal', hit).catch(() => {}) } },
+          { id: 'basket-open', label: '打开', onSelect: () => { void call('filesystem', 'open', hit).catch((error) => log('error', 'Insights', '打开失败', errorText(error))) } },
+          { id: 'basket-copy', label: '复制路径', onSelect: () => { void call('clipboard', 'writeText', hit).catch(() => {}) } },
+          { id: 'basket-remove', label: '移出暂存', danger: true, onSelect: () => { basketStore.remove(hit); log('event', 'Insights', '已移出暂存') } }
+        ]
+      }
+      const entries: ContextMenuEntry[] = [
+        { id: 'basket-copy-all', label: `复制全部路径（${items.length}）`, disabled: !items.length, onSelect: () => { void copyPaths() } }
+      ]
+      if (items.length > 0) {
+        entries.push({
+          id: 'basket-clear',
+          label: '清空暂存篮',
+          danger: true,
+          onSelect: () => {
+            if (!window.confirm(`清空暂存篮中的 ${items.length} 项？文件本身不受影响。`)) return
+            basketStore.clear()
+            setSelectedPath('')
+            log('event', 'Insights', '已清空暂存篮')
+          }
+        })
+      }
+      return entries
+    }, { order: 10 })
+  }, [items.length])
+
   return (
     <ThemeFloatingPanel title="文件暂存篮" icon={<Archive className="w-3.5 h-3.5" />} badge={`${items.length} 项`} isOpen={isOpen} onClose={closeFloatingPanel} initialX={64} initialY={56} initialWidth={1180} initialHeight={720} minWidth={900} minHeight={500}
       headerActions={<><DesktopButton size="xs" variant="ghost" onClick={() => void copyPaths()} disabled={!items.length}>复制全部路径</DesktopButton><DesktopIconButton size="xs" icon={<Trash2 className="w-3.5 h-3.5" />} tooltip="清空暂存篮" disabled={!items.length} onClick={() => { basketStore.clear(); setSelectedPath(''); log('event', 'Insights', '已清空暂存篮') }} /></>}>
-      <div className="grid h-full min-h-0 grid-cols-[156px_minmax(0,1fr)_250px] overflow-hidden rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-inset)]">
+      <div data-context-zone="insights.basket" className="grid h-full min-h-0 grid-cols-[156px_minmax(0,1fr)_250px] overflow-hidden rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-inset)]">
         <aside className="flex min-h-0 flex-col border-r border-[var(--ds-border)] bg-[var(--ds-surface)] p-2 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]">
           <div className="mb-2 px-2 py-2"><div className="text-xs font-semibold text-[var(--ds-text-primary)] dark:text-[var(--ds-text-primary)]">文件暂存</div><div className="mt-1 text-xs text-[var(--ds-text-subtle)]">临时收集，集中处理</div></div>
           <div className="flex-1 space-y-0.5 overflow-y-auto">{(Object.keys(filterNames) as BasketFilter[]).map((key) => <DesktopButton key={key} size="xs" variant="ghost" active={filter === key} onClick={() => setFilter(key)} className="w-full justify-start gap-2 px-2.5 text-left"><span className="text-[var(--ds-text-muted)]">{categoryIcon(key)}</span><span className="flex-1">{filterNames[key]}</span><span className="text-xs text-[var(--ds-text-subtle)]">{counts[key]}</span></DesktopButton>)}</div>
@@ -57,7 +90,7 @@ export function BasketPanel(): ReactElement | null {
         </aside>
         <main className="flex min-h-0 min-w-0 flex-col bg-[var(--ds-surface-inset)]">
           <div className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--ds-border)] bg-[var(--ds-surface)] px-4 dark:border-[var(--ds-border)] dark:bg-[var(--ds-surface-raised)]"><div className="text-xs font-semibold text-[var(--ds-text-primary)] dark:text-[var(--ds-text-primary)]">{filterNames[filter]} <span className="ml-1 font-normal text-[var(--ds-text-subtle)]">({visible.length})</span></div><span className="ml-auto text-xs text-[var(--ds-text-subtle)]">选择卡片查看文件信息</span></div>
-          {visible.length ? <div className="min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-2 gap-2 xl:grid-cols-3">{visible.map((item) => { const kind = category(item); const active = selected?.path === item.path; return <div key={item.path} className="group relative min-h-[132px] min-w-0">
+          {visible.length ? <div className="min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-2 gap-2 xl:grid-cols-3">{visible.map((item) => { const kind = category(item); const active = selected?.path === item.path; return <div key={item.path} data-basket-path={item.path} className="group relative min-h-[132px] min-w-0">
             <DesktopCardButton selected={active} onClick={() => setSelectedPath(item.path)} className="flex h-full w-full flex-col p-2.5">
               <span className="mb-2 flex w-full items-start justify-between pr-7"><span className={`flex h-9 w-9 items-center justify-center rounded-[var(--ds-radius-control)] ${kind === 'folder' ? 'bg-[var(--ds-status-warning-soft)] text-[var(--ds-status-warning)]' : kind === 'image' ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent)]' : kind === 'audio' ? 'bg-[var(--ds-status-info-soft)] text-[var(--ds-status-info)]' : 'bg-[var(--ds-surface-muted)] text-[var(--ds-text-muted)]'}`}>{categoryIcon(kind)}</span></span>
               <span className="w-full truncate text-xs font-semibold text-[var(--ds-text-primary)]" title={item.name}>{item.name}</span><span className="mt-1 w-full truncate text-xs text-[var(--ds-text-subtle)]" title={item.path}>{item.path}</span><span className="mt-auto w-full pt-2 text-xs text-[var(--ds-text-muted)]">{item.isDirectory ? '文件夹' : formatBytes(item.size)}</span>

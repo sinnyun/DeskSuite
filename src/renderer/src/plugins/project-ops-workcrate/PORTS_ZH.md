@@ -61,3 +61,7 @@
 ## 快速创建视图
 
 内部组件 `QuickCreate.tsx` 由项目创建后的页面管理“快速创建”入口打开。支持 Excel/WPS 粘贴、CSV 解析、表格逐格编辑、增删行、有效行数预览和复用初始画板。仅通过 bridge 调用 `workcrateBoards.previewQuickCreate` 与 `quickCreate`。成功返回更新后的页面矩阵，失败保留草稿并显示限长、遮蔽凭据和本机路径后的错误。`workcrate:panel-open` 可带 `quickCreate: true` 和解析后的 `table`，供 MCP 打开和验收。保持面板尺寸及内部滚动，文案中文。
+
+## 右键菜单
+
+经 `contextMenu` 服务注册三个区域（order 10）。`workcrate.projects` 作用于工程卡（`data-workcrate-project/-name/-doc-path`）：打开页面管理、打开工程文件夹、复制路径、删除工程（带确认）；空白处刷新列表。`workcrate.pages` 作用于页面管理：页面卡提供编辑页面、切换导出选择（带勾选态）与导出选中图片（标注已选数量）；空白处提供新增画板 / 快速创建 / 同步（无文档或面板繁忙时禁用）。`workcrate.thumbs` 作用于面板缩略图：编辑页面。

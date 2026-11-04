@@ -15,3 +15,7 @@
 - Data: `forPaths`, `tree`, `counts`, tag creation and legacy import results are decoded with renderer-plugin-local Zod schemas before entering the cache or page state. `annotations:changed` event payloads are checked before triggering refresh; writes remain optimistic and are sent through IPC.
 - Configuration / localStorage: none.
 - Interface text is Chinese. Tag create/rename/merge/remove and batch assignment controls are provided in the tag page.
+
+## Context menus
+
+The tag page registers `annotations.tags` (order 10): the blank area offers create-root-tag and refresh; a tag row (`data-tag-id`) offers view aggregation, apply/remove to/from the current selection (when a selection exists), add child tag, rename, merge-into (submenu of sibling tags) and delete. All name inputs use `ui.prompt`.

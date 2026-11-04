@@ -29,3 +29,4 @@
 - The progress panel exposes the latest reversible operation when the undo stack is nonempty and expands completed jobs to show every item status and message.
 - No persistent data or configuration is owned by this renderer plugin.
 - Interface copy is Chinese.
+- Contributes a `explorer.workspace` context-menu entry group (order 20, merged below the explorer's own order-10 menu with a separator): on selected entries a "文件操作" submenu (app clipboard copy/cut, copy / move / rename / trash with approval plans) plus an OS "拖到其他应用" drag-out item; on blank space a paste item (labelled with the pending clip count and disabled reasons) and "新建文件夹…". Requires the `contextMenu` service; registration is skipped when it is missing.

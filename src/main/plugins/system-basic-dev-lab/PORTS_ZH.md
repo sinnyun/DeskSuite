@@ -20,6 +20,7 @@
 - `dev_inject_data({ count, profile? })` 启动低影响写任务并返回作业 ID。
 - `dev_clear_data({ profile? })` 启动低影响写任务，只清理本插件创建的虚拟记录。
 - `dev_status({ profile? })` 为只读工具。
+- `dev_open_context_menu({ zoneId, x?, y?, selector? })` 广播 `dev:context-menu`，让渲染层直接打开指定 `data-context-zone` 的右键菜单（仅供验收；区域无贡献时回退内置兜底菜单）。`selector` 可指定菜单目标元素（如 `[data-entry-path]`）模拟在卡片上右键；缺省使用区域元素。
 
 ## 事件与设置
 

@@ -141,6 +141,7 @@ export function BoardViewport({ board, state }: { board: CanvasService; state: S
       className="absolute inset-0 min-h-0 min-w-0 overflow-hidden outline-none"
       style={style}
       data-whiteboard-canvas
+      data-context-zone="canvas.board"
       data-whiteboard-id={state.id}
       onDoubleClick={() => {
         const snapshot = board.getSnapshot()

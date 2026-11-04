@@ -34,3 +34,7 @@
 ## 事件
 
 无。全部界面状态由宿主 `useLayout` 存储维护。
+
+## 右键菜单
+
+`setup()` 经 `contextMenu` 服务注册三个区域：`shell.top`（命令面板 / 设置 / 启动台、左右侧栏与底部坞折叠开关、专注模式、主题切换、重置布局、重新载入界面）、`shell.activity`（按 `data-activity-label` 打开/隐藏被右键的活动入口、折叠左侧栏、打开命令面板）、`shell.tabs`（按 `data-tab-id`/`data-sidebar-region` 切换到被右键的页签、折叠/展开对应侧栏或底部坞、重置布局）。全部动作驱动宿主 `layoutStore`/`themeStore`。

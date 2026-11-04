@@ -31,3 +31,4 @@
 - 面板自己的级别/类别/来源/搜索/展开状态由插件内 Zustand vanilla store 持有；筛选不会修改 workbench 日志仓库。
 - `setup()` 监听插件私有广播 `debug-console:view`，校验后交给 `consoleViewStore.applyCommand()`。载荷形如 `{ search?, source?, levels?, categories?, expanded?, reset? }`，由 `consoleViewCommandSchema` 校验，非法载荷只记录警告、不改动面板。主进程 `system-provider-commands` 把它注册为 `system.set-debug-console-view` 命令，MCP 与自动化因此可以直接驱动筛选，不必往 `commands:action` 白名单里加动作。`reset` 只还原级别/类别/来源/搜索，`expanded` 由自己的字段整体替换。
 - 日志行与调用链分组用布尔选择器订阅（`state.expanded.includes(id)`），筛选或展开变化只会重渲染标记真正翻转的那几行；面板级的 `ConsolePanel`、`ConsoleToolbar`、`ConsoleStatus` 保留整店订阅，并把派生计数（`filterLogs`、级别/类别药丸、状态栏总数）按 `[logs, view]` 记忆化。
+- 右键菜单：`debug.rows`（order 10）作用于日志/调用链行（`data-debug-entry/-category/-trace`）：复制内容、展开/收起调用链、仅看此类别；空白处复制全部可见行、导出 JSON 与清空日志（带确认）。`debug.status` 作用于状态栏右段：打开调试台与清空日志（带确认）。

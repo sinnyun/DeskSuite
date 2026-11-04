@@ -8,6 +8,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   ReactNode
 } from 'react'
+import type { DesktopPromptOptions } from './types'
 import { getService } from './services'
 
 export interface DesktopButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -162,6 +163,8 @@ export interface UiKit {
   ThemeWorkspacePanel: ComponentType<ThemeWorkspacePanelProps>
   ThemeCollapsibleSection: ComponentType<ThemeCollapsibleSectionProps>
   ThemeFloatingPanel: ComponentType<ThemeFloatingPanelProps>
+  // Promise 风格输入对话框（Electron 无 window.prompt）；resolve null 表示取消
+  prompt(options: DesktopPromptOptions): Promise<string | null>
 }
 
 export function useUiKit(): UiKit {

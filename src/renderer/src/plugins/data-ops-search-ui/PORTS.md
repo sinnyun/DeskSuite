@@ -9,3 +9,4 @@
 - Unindexed directories remain available through normal Explorer browsing.
 - Storage, configuration, events, and MCP tools are owned by the corresponding main-process plugins.
 - Interface copy is Chinese.
+- Contributes the `search.results` context menu (order 10) on result rows (`data-search-path/-name/-dir/-kind/-size/-mtime`): reveal in the file manager, open, copy path, add to basket (when the `basket` service is available) and favorite toggle (when the `annotations` service is available). Requires the `contextMenu` service; registration is skipped when it is missing.

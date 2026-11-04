@@ -11,7 +11,10 @@ export function LeftSidebar(): ReactElement {
 
   return (
     <div className="flex h-full shrink-0 select-none overflow-hidden z-20">
-        <nav className="w-14 py-2.5 flex flex-col items-center gap-1.5 border-r border-[var(--ds-border)] dark:border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:bg-[var(--ds-surface-subtle)] shrink-0 overflow-y-auto no-scrollbar">
+        <nav
+          className="w-14 py-2.5 flex flex-col items-center gap-1.5 border-r border-[var(--ds-border)] dark:border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:bg-[var(--ds-surface-subtle)] shrink-0 overflow-y-auto no-scrollbar"
+          data-context-zone="shell.activity"
+        >
         <SlotRenderer
           slotId="sidebar.activity"
           className="flex flex-col items-center gap-1.5 w-full px-1"

@@ -8,6 +8,7 @@ import { FileTree } from './components/FileTree'
 import { FileWorkspace } from './components/FileWorkspace'
 import { Inspector } from './components/Inspector'
 import { StatusInfo } from './components/StatusInfo'
+import { setupExplorerMenus } from './menus'
 import { activeSelectionService } from './store'
 import { metadataStore } from './metadata'
 import { explorerPanes, panesRendererService } from './panes'
@@ -79,6 +80,11 @@ export default definePlugin({
       void explorerPanes.initialize()
       void metadataStore.start()
     log('lifecycle', 'Explorer', '文件浏览器插件已加载')
-    return startBookmarkBridge()
+    const stopMenus = setupExplorerMenus()
+    const stopBookmarks = startBookmarkBridge()
+    return () => {
+      stopMenus()
+      stopBookmarks()
+    }
   }
 })

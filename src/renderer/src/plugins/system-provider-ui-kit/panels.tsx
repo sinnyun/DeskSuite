@@ -50,19 +50,24 @@ export function ThemeSidebarPanel({
       style={{ width: `${width}px` }}
       className={`h-full bg-[var(--ds-surface)] ${borderClass} flex flex-col select-none shrink-0 overflow-hidden ${className}`}
     >
-        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--ds-border)] bg-[var(--ds-surface)] shrink-0">
+        <div
+          className="flex items-center justify-between px-3 py-2 border-b border-[var(--ds-border)] bg-[var(--ds-surface)] shrink-0"
+          data-context-zone="shell.tabs"
+          data-sidebar-region={side}
+        >
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {tabs && tabs.length > 0 ? (
             tabs.map((tab) => (
-              <DesktopTab
-                key={tab.id}
-                label={tab.title}
-                icon={tab.icon}
-                badge={tab.badge}
-                active={activeTab === tab.id}
-                onClick={() => onTabChange?.(tab.id)}
-                className="shrink-0"
-              />
+              <div key={tab.id} className="contents" data-tab-id={tab.id}>
+                <DesktopTab
+                  label={tab.title}
+                  icon={tab.icon}
+                  badge={tab.badge}
+                  active={activeTab === tab.id}
+                  onClick={() => onTabChange?.(tab.id)}
+                  className="shrink-0"
+                />
+              </div>
             ))
           ) : (
               <span data-ds-type="panel-title" className="ds-type-panel-title">{title}</span>
@@ -295,6 +300,8 @@ export function ThemeFloatingPanel({
         onPointerDown={handlePointerDownDrag}
         onPointerMove={handlePointerMoveDrag}
         onPointerUp={handlePointerUpDrag}
+        data-context-zone="ui.panel"
+        data-panel-title={title}
         className="h-10 px-3.5 border-b border-[var(--ds-border)] dark:border-[var(--ds-border)] bg-[var(--ds-surface-subtle)] dark:bg-[var(--ds-surface-raised)] flex items-center justify-between cursor-move shrink-0"
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -311,7 +318,7 @@ export function ThemeFloatingPanel({
         <div className="flex items-center gap-1.5 shrink-0">
           {headerActions}
           <DesktopIconButton size="sm" aria-label={isMaximized ? '还原悬浮面板' : '最大化悬浮面板'} tooltip={isMaximized ? '还原窗口' : '最大化窗口'} onClick={(event) => { event.stopPropagation(); setIsMaximized((prev) => !prev) }} className="shrink-0" icon={isMaximized ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />} />
-          <DesktopIconButton size="sm" variant="danger" aria-label="关闭悬浮面板" tooltip="关闭悬浮面板" onClick={(event) => { event.stopPropagation(); onClose() }} className="shrink-0" icon={<X className="w-3.5 h-3.5" />} />
+          <DesktopIconButton size="sm" variant="danger" aria-label="关闭悬浮面板" data-panel-close="true" tooltip="关闭悬浮面板" onClick={(event) => { event.stopPropagation(); onClose() }} className="shrink-0" icon={<X className="w-3.5 h-3.5" />} />
         </div>
       </div>
 

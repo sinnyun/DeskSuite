@@ -13,6 +13,7 @@ export function ActivityButton({
     <button
       type="button"
       onClick={onClick}
+      data-activity-label={label}
       title={tooltip || label}
         className={`relative group w-12 min-h-12 h-auto py-1 flex flex-col items-center justify-center rounded-md transition-all cursor-pointer ${
         active

@@ -1,8 +1,8 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import type { ReactElement } from 'react'
 import { AlertCircle, Terminal } from 'lucide-react'
-import { useLayoutShallow, useLogs, useUiKit } from '../../../workbench/sdk'
-import { filterLogs, useConsoleView } from '../view'
+import { getService, logStore, useLayoutShallow, useLogs, useUiKit, type ContextMenuService } from '../../../workbench/sdk'
+import { consoleViewStore, filterLogs, useConsoleView } from '../view'
 
 export function ConsoleStatus(): ReactElement {
   const logs = useLogs()
@@ -16,11 +16,21 @@ export function ConsoleStatus(): ReactElement {
   }), [logs, view])
   const filtering = filtered !== logs.length
 
+  useEffect(() => {
+    const cm = getService<ContextMenuService>('contextMenu')
+    if (!cm) return
+    return cm.register('debug.status', () => [
+      { id: 'open', label: '打开调试台', onSelect: () => openFloatingPanel('debug-console') },
+      { id: 'clear', label: '清空日志', danger: true, disabled: !logs.length, onSelect: () => { if (window.confirm('清空全部调试日志？')) { logStore.clear(); consoleViewStore.reset() } } }
+    ], { order: 10 })
+  }, [openFloatingPanel, logs.length])
+
   return (
     <DesktopButton
       type="button"
       size="xs"
       variant="ghost"
+      data-context-zone="debug.status"
       onClick={() => openFloatingPanel('debug-console')}
       title="打开调试控制台"
       className="gap-1.5 px-1"

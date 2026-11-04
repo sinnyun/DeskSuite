@@ -91,7 +91,7 @@ export function FileTree(): ReactElement {
     finally { setSaving(false) }
   }
   return (
-    <div className="flex flex-col gap-2.5 p-2 text-xs">
+    <div data-context-zone="explorer.tree" className="flex flex-col gap-2.5 p-2 text-xs">
       <Section
         title="快速访问"
         action={
@@ -109,6 +109,8 @@ export function FileTree(): ReactElement {
             size="sm"
             variant="ghost"
             active={state.path?.toLowerCase() === item.path.toLowerCase()}
+            data-tree-kind="quick"
+            data-tree-path={item.path}
             onClick={() => explorerStore.navigate(item.path)}
             className="!h-auto !w-full !justify-start !rounded-md !px-2 !py-1.5 !border-0 !shadow-none gap-2 text-left"
           >
@@ -140,6 +142,7 @@ export function FileTree(): ReactElement {
               key={drive.path}
               selected={state.path?.toLowerCase() === drive.path.toLowerCase()}
               data-drive-path={drive.path}
+              data-drive-name={drive.name}
               data-network-drive={drive.isNetwork}
               onClick={() => explorerStore.navigate(drive.path)}
               className="flex flex-col gap-1.5 my-0.5 w-full px-2.5 py-2"

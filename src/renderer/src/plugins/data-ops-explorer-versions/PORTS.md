@@ -24,3 +24,7 @@ Normal list/state/branchGraph refreshes read the persistent database only, inclu
 UI mutations handle `requiresApproval` command plans through approve/execute before using jobId. Restore/abandon reuse their explicit confirmations. Empty descriptions keep Save enabled and receive an automatic version name. Submission notices clear on job completion.
 
 Cancelled confirmation ends normally without a failure notice.
+
+## Context menus
+
+Registers `versions.panel` (order 10): version rows (`data-version-id`) offer restore and copy description; branch rows (`data-branch-name`) offer switch / merge / archive with disabled reasons while a version task is running; blank space offers refresh status, sync metadata and create branch.

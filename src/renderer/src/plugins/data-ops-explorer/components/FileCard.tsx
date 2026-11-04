@@ -61,7 +61,7 @@ export function FileCard({ entry, selected, rating, favorite, onSelect, onOpen, 
   const { src: thumbnail, previewRef } = useCardThumbnail(entry)
   const systemIcon = useFileIcon(entry, !thumbnail, previewRef)
   const { DesktopCardButton, DesktopIconButton } = useUiKit()
-  return <div className="group relative min-w-0">
+  return <div className="group relative min-w-0" data-entry-path={entry.path} data-entry-name={entry.name} data-entry-dir={entry.isDirectory ? '1' : '0'}>
   <DesktopCardButton
     type="button"
     selected={selected}
